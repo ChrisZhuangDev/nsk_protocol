@@ -1,1 +1,0 @@
-在 /Users/chris/code/nsk 中找不到 CMakeLists.txt 选择 CMakeLists.txt
