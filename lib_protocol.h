@@ -25,9 +25,10 @@ typedef struct {
     protocol_state_t state;
     uint8_t data[PROTOCOL_MAX_DATA_LEN];
     uint16_t data_len;
-    uint16_t xor[PROTOCOL_XOR_LEN];
+    uint8_t xor[PROTOCOL_XOR_LEN];
 }protocol_parser_t;
 
+uint8_t protocol_parser_init(protocol_parser_t *parser);
 uint8_t protocol_parser_process(protocol_parser_t *parser, uint8_t *buf, uint16_t len);
 
 #endif //LIB_PROTOCOL_H

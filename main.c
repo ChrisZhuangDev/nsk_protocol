@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
     protocol_parser_t parser;
     uint8_t i = 0;
     uint8_t *p = test_data;
+    protocol_parser_init(&parser);
     for (char **p = test_data; *p != NULL; ++p) {
         printf("---- Testing input: %s ----\n", *p);
         protocol_parser_process(&parser, (uint8_t*)*p, strlen(*p));

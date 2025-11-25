@@ -5,7 +5,7 @@
 #define PROTOCOL_BYTE_MIN       '0'
 #define PROTOCOL_BYTE_MAX       'f'
 
-
+static const char hex_digits[] = "0123456789ABCDEF";
 
 static void lib_protocol_dump(const protocol_parser_t *parser)
 {
@@ -49,6 +49,39 @@ static void lib_protocol_dump(const protocol_parser_t *parser)
     printf("  xor: %02X %02X\n", (unsigned)parser->xor[0], (unsigned)parser->xor[1]);
 }
 
+static uint8_t protocol_paraser_cal_xor(const uint8_t *buf, uint16_t len ,uint8_t xor_init ,uint8_t *xor_out)
+{
+    uint16_t i = 0;
+    uint8_t xor_val = 0;
+    uint8_t ret = PROTOCOL_RETURN_ERROR;
+    if (buf != NULL && len > 0 && xor_out != NULL)
+    {
+        xor_val = xor_init;
+        for (i = 0; i < len; i++)
+        {
+            xor_val ^= buf[i];
+        }
+        *xor_out  = xor_val;
+        ret = PROTOCOL_RETURN_OK;
+    }
+    return ret;
+}
+
+static uint8_t protocol_paraser_check_xor(protocol_parser_t *parser)
+{
+    uint8_t xor_val = 0;
+    uint8_t xor_high_byte = 0;
+    uint8_t xor_low_byte = 0;
+    if (parser != NULL && parser->data_len > 0)
+    {
+        protocol_paraser_cal_xor(parser->data, parser->data_len, 0, &xor_val);
+        xor_high_byte = ((xor_val >> 4) & 0x0F) + '0';
+        xor_low_byte = (xor_val & 0x0F) + '0';
+        if ((xor_val >> 4)  == parser->xor[0] && xor_val == parser->xor[1])
+            return PROTOCOL_RETURN_OK;
+    }
+}
+
 static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const uint8_t *buf, uint16_t len)
 {
     uint16_t i = 0;
@@ -71,7 +104,8 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     if (byte == PROTOCOL_BYTE_HEAD)
                     {
                         memset(parser->data , 0, PROTOCOL_MAX_DATA_LEN);
-                        parser->data_len = 0;
+                        parser->data[0] = byte;
+                        parser->data_len = 1;
                         parser->state = PROTOCOL_STATE_HEAD;
                     }
                     break;
@@ -79,7 +113,9 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     if (byte == PROTOCOL_BYTE_HEAD)
                     {
                         memset(parser->data , 0, PROTOCOL_MAX_DATA_LEN);
-                        parser->data_len = 0;
+                        parser->data[0] = byte;
+                        parser->data_len = 1;
+                        parser->state = PROTOCOL_BYTE_HEAD;
                     }
                     else if (byte == PROTOCOL_BYTE_TAIL )
                     {
@@ -87,8 +123,7 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     }
                     else
                     {
-                        parser->data[0] = byte;
-                        parser->data_len = 1;
+                        parser->data[parser->data_len++] = byte;
                         parser->state = PROTOCOL_STATE_DATA;
                     }
                     break;
@@ -96,11 +131,13 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     if (byte == PROTOCOL_BYTE_HEAD)
                     {
                         memset(parser->data , 0, PROTOCOL_MAX_DATA_LEN);
-                        parser->data_len = 0;
+                        parser->data[0] = byte;
+                        parser->data_len = 1;
                         parser->state = PROTOCOL_STATE_HEAD;
                     }
                     else if (byte == PROTOCOL_BYTE_TAIL)
                     {
+                        parser->data[parser->data_len++] = byte;
                         parser->state = PROTOCOL_STATE_TAIL;
                     }
                     else
@@ -112,7 +149,8 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     if (byte == PROTOCOL_BYTE_HEAD)
                     {
                         memset(parser->data , 0, PROTOCOL_MAX_DATA_LEN);
-                        parser->data_len = 0;
+                        parser->data[0] = byte;
+                        parser->data_len = 1;
                         parser->state = PROTOCOL_STATE_HEAD;
                     }
                     else if (byte == PROTOCOL_BYTE_TAIL)
@@ -129,7 +167,8 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     if (byte == PROTOCOL_BYTE_HEAD)
                     {
                         memset(parser->data , 0, PROTOCOL_MAX_DATA_LEN);
-                        parser->data_len = 0;
+                        parser->data[0] = byte;
+                        parser->data_len = 1;
                         parser->state = PROTOCOL_STATE_HEAD;
                     }
                     else if (byte == PROTOCOL_BYTE_TAIL)
@@ -140,6 +179,7 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
                     {
                         parser->xor[1] = byte;
                         parser->state = PROTOCOL_STATE_IDLE;
+                        protocol_paraser_check_xor(parser);
                         ret = PROTOCOL_RETURN_OK;
                     }
                     break;
