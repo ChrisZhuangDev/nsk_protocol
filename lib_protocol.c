@@ -49,7 +49,7 @@ static void lib_protocol_dump(const protocol_parser_t *parser)
     printf("  xor: %02X %02X\n", (unsigned)parser->xor[0], (unsigned)parser->xor[1]);
 }
 
-static uint8_t protocol_parser_recv(protocol_parser_t *parser, const uint8_t *buf, uint16_t len)
+static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const uint8_t *buf, uint16_t len)
 {
     uint16_t i = 0;
     uint8_t byte = 0;
@@ -179,7 +179,7 @@ uint8_t protocol_parser_init(protocol_parser_t *parser)
 uint8_t protocol_parser_process(protocol_parser_t *parser, uint8_t *buf, uint16_t len)
 {
     uint8_t ret = PROTOCOL_RETURN_ERROR;
-    ret = protocol_parser_recv(parser, buf, len);
+    ret = protocol_parser_state_machine(parser, buf, len);
     if (ret == PROTOCOL_RETURN_ERROR)
         printf("paraser error\n");
     else
