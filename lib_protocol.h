@@ -2,7 +2,8 @@
 #define LIB_PROTOCOL_H
 #include <stdlib.h>
 #include <string.h>
-
+#include <stdint.h>
+#include <stdbool.h>
 #define PROTOCOL_MAX_DATA_LEN   64
 #define PROTOCOL_XOR_LEN        2
 enum {

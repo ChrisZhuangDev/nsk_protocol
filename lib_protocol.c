@@ -1,9 +1,37 @@
 #include "lib_protocol.h"
 #include <stdio.h>
-#define PROTOCOL_BYTE_HEAD      '@'
-#define PROTOCOL_BYTE_TAIL      '*'
-#define PROTOCOL_BYTE_MIN       '0'
-#define PROTOCOL_BYTE_MAX       'f'
+#define PROTOCOL_BYTE_HEAD          '@'
+#define PROTOCOL_BYTE_TAIL          '*'
+#define PROTOCOL_BYTE_MIN           '0'
+#define PROTOCOL_BYTE_MAX           '9'
+#define PROTOCOL_BYTE_NUM_MIN       '0'
+#define PROTOCOL_BYTE_NUM_MAX       '9'
+#define PROTOCOL_BYTE_MAX_ALPHA     'F'
+#define PROTOCOL_BYTE_MIN_ALPHA     'A'
+
+static inline bool IS_HEX_CHAR(char ch)
+{
+    return (((ch >= '0') && (ch <= '9')) ||
+            ((ch >= 'A') && (ch <= 'F')));
+}
+
+static const char hex_table[16] = {
+    '0', '1', '2', '3',
+    '4', '5', '6', '7',
+    '8', '9', 'A', 'B',
+    'C', 'D', 'E', 'F'
+};
+
+static bool uint8_to_hex_chars(uint8_t value, uint8_t *hex_hi, uint8_t *hex_lo)
+{
+    if ((hex_hi == NULL) || (hex_lo == NULL))
+    {
+        return false;
+    }
+    *hex_hi = (uint8_t)hex_table[(value >> 4U) & 0x0FU];
+    *hex_lo = (uint8_t)hex_table[value & 0x0FU];
+    return true;
+}
 
 static const char hex_digits[] = "0123456789ABCDEF";
 
@@ -72,14 +100,17 @@ static uint8_t protocol_paraser_check_xor(protocol_parser_t *parser)
     uint8_t xor_val = 0;
     uint8_t xor_high_byte = 0;
     uint8_t xor_low_byte = 0;
+    uint8_t ret = PROTOCOL_RETURN_ERROR;
     if (parser != NULL && parser->data_len > 0)
     {
         protocol_paraser_cal_xor(parser->data, parser->data_len, 0, &xor_val);
-        xor_high_byte = ((xor_val >> 4) & 0x0F) + '0';
-        xor_low_byte = (xor_val & 0x0F) + '0';
-        if ((xor_val >> 4)  == parser->xor[0] && xor_val == parser->xor[1])
-            return PROTOCOL_RETURN_OK;
+        xor_high_byte = hex_digits[((xor_val >> 4) & 0x0F)];
+        xor_low_byte = hex_digits[(xor_val & 0x0F)];
+        uint8_to_hex_chars(xor_val,&xor_high_byte ,&xor_low_byte);
+        if (xor_high_byte  == parser->xor[0] && xor_low_byte == parser->xor[1])
+            ret = PROTOCOL_RETURN_OK;
     }
+    return ret;
 }
 
 static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const uint8_t *buf, uint16_t len)
@@ -93,7 +124,7 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
         {
             byte = buf[i];
             if (byte != PROTOCOL_BYTE_HEAD && byte != PROTOCOL_BYTE_TAIL && \
-                (byte > PROTOCOL_BYTE_MAX || byte < PROTOCOL_BYTE_MIN))
+                IS_HEX_CHAR(byte) != true)
             {
                 parser->state = PROTOCOL_STATE_IDLE;
                 continue;
