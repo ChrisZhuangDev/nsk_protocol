@@ -33,6 +33,7 @@ static uint8_t comm_protocol_cal_xor(const uint8_t *buf, uint16_t len ,uint8_t x
 
 static void comm_protocol_dump_decoder(const protocol_decoder_t *decoder, const uint8_t *data, uint16_t len)
 {
+#if DEBUG_COMM_PROTOCOL
     // State name lookup table
     const char *state_str = NULL;
     uint16_t i = 0;
@@ -82,9 +83,11 @@ static void comm_protocol_dump_decoder(const protocol_decoder_t *decoder, const 
         DEBUG("           %-2c %-2c\n", (char)decoder->xor[0], (char)decoder->xor[1]);
         DEBUG("==========================================\n");
     }
+#endif 
 }
 static void comm_protocol_dump_decoder_result(const uint8_t *data, uint16_t len)
 {
+#if DEBUG_COMM_PROTOCOL
     uint16_t i = 0;
     DEBUG("Decoded Data: \n");
     if(data != NULL)
@@ -95,6 +98,7 @@ static void comm_protocol_dump_decoder_result(const uint8_t *data, uint16_t len)
         }
         DEBUG("\n");
     }
+#endif
 }
 
 
@@ -253,7 +257,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
 {
     uint8_t ret = RESULT_ERROR;
     uint8_t i = 0;
-    uint8_t bytes_buf[32] = {0};
+    uint8_t bytes_buf[COMM_PROTOCOL_MAX_HEX_DATA_LEN] = {0};
     uint16_t bytes_len = 0;
     const uint8_t *data_start = NULL;
     uint16_t data_len = 0;
@@ -266,6 +270,13 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
             // 跳过帧头@，提取数据部分（不包括帧尾*）
             data_start = &decoder->data[1];
             data_len = decoder->data_len - 2;
+            if(data_len % 2 != 0)
+            {
+                // 数据长度不是偶数，无法转换为字节数组
+                DEBUG("Data length is not even, cannot convert to bytes\n");
+                ret = RESULT_ERROR;
+                continue;
+            }
             if (hex_str_to_bytes(data_start, data_len, bytes_buf, sizeof(bytes_buf), &bytes_len) == true)
             {
                 comm_protocol_decode_trigger_callback(decoder, bytes_buf, bytes_len);
