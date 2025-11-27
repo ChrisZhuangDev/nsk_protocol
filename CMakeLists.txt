@@ -4,7 +4,7 @@ project(nsk C)
 set(CMAKE_C_STANDARD 99)
 
 add_executable(nsk main.c
-        lib_protocol.c
-        lib_protocol.h
-        protocol_parser.c
-        protocol_parser.h)
+        hex_ascll.c
+        hex_ascll.h
+        comm_protocol.c
+        comm_protocol.h)

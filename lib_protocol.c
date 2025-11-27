@@ -1,85 +1,45 @@
 #include "lib_protocol.h"
+#include "hex_ascll.h"
 #include <stdio.h>
+
 #define PROTOCOL_BYTE_HEAD          '@'
 #define PROTOCOL_BYTE_TAIL          '*'
 
 
-static inline bool IS_HEX_CHAR(char ch)
-{
-    return (((ch >= '0') && (ch <= '9')) ||
-            ((ch >= 'A') && (ch <= 'F')));
-}
 
-static bool hex_char_to_uint4(uint8_t hex_char, uint8_t *value)
+
+/**
+ * @brief Set callback function for successful protocol parsing
+ * 
+ * @param parser Pointer to protocol parser structure
+ * @param callback Callback function to be called on successful parsing
+ * @param user_data User context data to be passed to callback
+ * @return PROTOCOL_RETURN_OK on success, PROTOCOL_RETURN_ERROR on failure
+ */
+uint8_t protocol_parser_set_callback(protocol_parser_t *parser, protocol_parse_callback_t callback, void *user_data)
 {
-    bool ret = false;
-    
-    if (value == NULL)
+    uint8_t ret = PROTOCOL_RETURN_ERROR;
+    if (parser !=  NULL)
     {
-        ret = false;
+        parser->callback = callback;
+        parser->user_data = user_data;
+        ret = PROTOCOL_RETURN_OK;
     }
-    else if ((hex_char >= (uint8_t)'0') && (hex_char <= (uint8_t)'9'))
-    {
-        *value = hex_char - (uint8_t)'0';
-        ret = true;
-    }
-    else if ((hex_char >= (uint8_t)'A') && (hex_char <= (uint8_t)'F'))
-    {
-        *value = (hex_char - (uint8_t)'A') + 10U;
-        ret = true;
-    }
-    else
-    {
-        ret = false;
-    }
-    
     return ret;
 }
 
-static bool hex_chars_to_uint8(uint8_t hex_hi, uint8_t hex_lo, uint8_t *value)
+/**
+ * @brief Trigger callback with parsed protocol data
+ * 
+ * @param parser Pointer to protocol parser structure
+ */
+static void protocol_trigger_callback(protocol_parser_t *parser, uint8_t *data, uint16_t data_len)
 {
-    uint8_t hi_val = 0U;
-    uint8_t lo_val = 0U;
-    bool ret = false;
-    
-    if (value == NULL)
+    if (parser != NULL && parser->callback != NULL)
     {
-        ret = false;
+        parser->callback(parser->user_data, data, data_len);
     }
-    else if ((hex_char_to_uint4(hex_hi, &hi_val) == true) && 
-             (hex_char_to_uint4(hex_lo, &lo_val) == true))
-    {
-        *value = (hi_val << 4U) | lo_val;
-        ret = true;
-    }
-    else
-    {
-        ret = false;
-    }
-    
-    return ret;
 }
-
-static const char hex_table[16] = {
-    '0', '1', '2', '3',
-    '4', '5', '6', '7',
-    '8', '9', 'A', 'B',
-    'C', 'D', 'E', 'F'
-};
-
-static bool uint8_to_hex_chars(uint8_t value, uint8_t *hex_hi, uint8_t *hex_lo)
-{
-    bool ret = false;
-    if ((hex_hi != NULL) && (hex_lo != NULL))
-    {
-        *hex_hi = (uint8_t)hex_table[(value >> 4U) & 0x0FU];
-        *hex_lo = (uint8_t)hex_table[value & 0x0FU];
-        ret = true;
-    }
-
-    return ret;
-}
-
 
 static void lib_protocol_dump(const protocol_parser_t *parser)
 {
@@ -142,12 +102,10 @@ static void lib_protocol_dump(const protocol_parser_t *parser)
         uint16_t i;
         uint16_t max = parser->data_len;
         
-#ifdef PROTOCOL_MAX_DATA_LEN
         if (max > PROTOCOL_MAX_DATA_LEN) 
         {
             max = PROTOCOL_MAX_DATA_LEN;
         }
-#endif
         
         printf("Data Hex :");
         for (i = 0; i < max; ++i) 
@@ -245,7 +203,7 @@ static uint8_t protocol_parser_state_machine(protocol_parser_t *parser, const ui
         {
             byte = buf[i];
             if (byte != PROTOCOL_BYTE_HEAD && byte != PROTOCOL_BYTE_TAIL && \
-                IS_HEX_CHAR(byte) != true)
+                is_hex_char(byte) != true)
             {
                 parser->state = PROTOCOL_STATE_IDLE;
                 continue;
@@ -355,7 +313,7 @@ static uint8_t protocol_parser_state_machine_single(protocol_parser_t *parser, u
     if (parser != NULL)
     {
         if (byte != PROTOCOL_BYTE_HEAD && byte != PROTOCOL_BYTE_TAIL && \
-            IS_HEX_CHAR(byte) != true)
+            is_hex_char(byte) != true)
         {
             parser->state = PROTOCOL_STATE_IDLE;
         }
@@ -455,59 +413,9 @@ static uint8_t protocol_parser_state_machine_single(protocol_parser_t *parser, u
     return ret;
 }
 
-
-uint8_t protocol_parser_data_encode()
+uint8_t protocol_parser_decode(protocol_parser_t *parser, const uint8_t *hex_str, uint16_t hex_len, uint8_t *bytes, uint16_t bytes_size, uint16_t *bytes_len)
 {
 
-}
-
-uint8_t protocol_parser_data_decode(const uint8_t *src_buf, uint16_t src_len, uint8_t *out_buf, uint16_t out_buf_size, uint16_t *out_len)
-{
-    uint16_t i = 0;
-    uint16_t buf_index = 0;
-    uint8_t data = 0;
-    uint8_t ret = PROTOCOL_RETURN_ERROR;
-    
-    // 参数检查
-    if (src_buf == NULL || out_buf == NULL || out_len == NULL)
-    {
-        return PROTOCOL_RETURN_ERROR;
-    }
-    
-    // 检查输入长度是否为偶数（每两个ASCII字符组成一个字节）
-    if (src_len == 0 || (src_len & 0x01) != 0)
-    {
-        return PROTOCOL_RETURN_ERROR;
-    }
-    
-    // 检查输出缓冲区大小是否足够
-    uint16_t required_size = src_len / 2;
-    if (out_buf_size < required_size)
-    {
-        return PROTOCOL_RETURN_ERROR;
-    }
-    
-    // 初始化输出长度
-    *out_len = 0;
-    
-    // 将ASCII十六进制字符对转换为二进制数据
-    for (i = 0; i < src_len; i += 2)
-    {
-        if (hex_chars_to_uint8(src_buf[i], src_buf[i + 1], &data) == true)
-        {
-            out_buf[buf_index++] = data;
-        }
-        else
-        {
-            // 转换失败，返回错误
-            return PROTOCOL_RETURN_ERROR;
-        }
-    }
-    
-    *out_len = buf_index;
-    ret = PROTOCOL_RETURN_OK;
-    
-    return ret;
 }
 
 uint8_t protocol_parser_init(protocol_parser_t *parser)
@@ -524,40 +432,35 @@ uint8_t protocol_parser_process(protocol_parser_t *parser, uint8_t *buf, uint16_
 {
     uint8_t ret = PROTOCOL_RETURN_ERROR;
     uint8_t i = 0;
-    uint8_t u8_buf[32] = {0};
-    uint16_t u8_len = 0;
+    uint8_t bytes_buf[32] = {0};
+    uint16_t bytes_len = 0;
+    const uint8_t *data_start = NULL;
+    uint16_t data_len = 0;
+    
     for(i = 0; i < len; i++)
     {
         ret = protocol_parser_state_machine_single(parser, buf[i]);
         if (ret == PROTOCOL_RETURN_OK)
         {
-            // 使用新的独立解码函数
             // 跳过帧头@，提取数据部分（不包括帧尾*）
-            const uint8_t *data_start = &parser->data[1];  // 跳过@
-            uint16_t data_len = parser->data_len - 2;      // 减去@和*
-            
-            if (protocol_parser_data_decode(data_start, data_len, u8_buf, sizeof(u8_buf), &u8_len) == PROTOCOL_RETURN_OK)
+            data_start = &parser->data[1];
+            data_len = parser->data_len - 2;
+            if (hex_str_to_bytes(data_start, data_len, bytes_buf, sizeof(bytes_buf), &bytes_len) == true)
             {
-                for(uint8_t j = 0; j < u8_len; j++)
-                {
-                    printf("%02X ", u8_buf[j]);
-                }
-                printf("\n");
+                protocol_trigger_callback(parser, bytes_buf, bytes_len);
             }
+            
             break;
         }    
     }
+    
     if (ret == PROTOCOL_RETURN_ERROR)
         printf("paraser error\n");
     else
         printf("paraser ok\n");
+        
     lib_protocol_dump(parser);
     
     return ret;
 }
 
-//1.将数据入队
-//2.一个字节一个字节出队进行解析
-//3.解析到完整的一包之后，在进行数据的解码
-//4.将完整的数据发送给上层
-//5.继续解码
