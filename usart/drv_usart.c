@@ -5,6 +5,7 @@
 /* callback types: rx callback provides data pointer, length and user context */
 typedef void (*drv_usart_rx_callback_t)(const uint8_t *data, uint16_t len, void *ctx);
 typedef void (*drv_usart_tx_callback_t)(void *ctx);
+
 #define DRV_USART_MAX_BUF_NUM    10U
 typedef struct{
     uint8_t *buf;
@@ -229,6 +230,38 @@ uint8_t *drv_usart_rx_isr_action(drv_usart_t *usart, uint8_t *data, uint16_t len
     return new_buf;
 }
 
+drv_status_t drv_usart_rx_get_data(drv_usart_t *usart, uint8_t **data, uint16_t *len)
+{
+    drv_usart_buf_t drv_buf;
+    if (usart == NULL || data == NULL || len == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+    /* check for pending rx buffers to process */
+    if (osMessageQueueGet(usart->rx_work_queue, &drv_buf, NULL, 0U) == osOK)
+    {
+        *data = drv_buf.buf;
+        *len = drv_buf.len;
+    }
+    else
+    {
+        return DRV_ERROR;
+    }
+    return DRV_OK;
+}
+
+drv_status_t drv_usart_release_rx_buffer(drv_usart_t *usart, uint8_t *buf)
+{
+    drv_status_t ret = DRV_INVALID_ARG;
+    if (usart != NULL && buf != NULL)
+    {
+        ret = mem_pool_free(&usart->rx_mem_pool, buf);
+    }
+    return ret;
+}
+
+
+
 drv_status_t drv_usart_tx_isr_action(drv_usart_t *usart)
 {
     drv_status_t ret = DRV_ERROR;
@@ -237,22 +270,74 @@ drv_status_t drv_usart_tx_isr_action(drv_usart_t *usart)
     {
         return DRV_INVALID_ARG;
     }
-    /* check for pending tx buffers to send */
-    if (osMessageQueueGet(usart->tx_work_queue, &drv_buf, NULL, 0U) == osOK)
+
+    if(usart->tx_semaphore != NULL)
     {
-        /* start transmission of next buffer */ 
-        if(usart->tx_callback != NULL)
-        {
-            usart->tx_callback(usart->tx_ctx);
-        }
-        ret = DRV_OK;
+        (void)osSemaphoreRelease(usart->tx_semaphore);
     }
+
+    return ret;
+}
+
+drv_status_t drv_usart_tx_send_before(drv_usart_t *usart)
+{
+    drv_status_t ret = DRV_ERROR;
+    if (usart == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+
+    if(usart->tx_semaphore != NULL)
+    {
+        if(osSemaphoreAcquire(usart->tx_semaphore, osWaitForever) == osOK)
+        {
+            ret = DRV_OK;
+        }
+    }
+
+    return ret;
+}
+
+drv_status_t drv_usart_tx_send_after(drv_usart_t *usart)
+{
+    drv_status_t ret = DRV_ERROR;
+    if (usart == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+
+    if(usart->tx_semaphore != NULL)
+    {
+        if(osSemaphoreRelease(usart->tx_semaphore) == osOK)
+        {
+            ret = DRV_OK;
+        }
+    }
+
     return ret;
 }
 
 
+drv_status_t drv_usart_tx_send_(drv_usart_t *usart)
+{
+    drv_status_t ret = DRV_ERROR;
+    if (usart == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
 
-drv_status_t drv_usart_send_data(drv_usart_t *usart, uint8_t *data, uint16_t len)
+    if(usart->tx_semaphore != NULL)
+    {
+        if(osSemaphoreAcquire(usart->tx_semaphore, osWaitForever) == osOK)
+        {
+            ret = DRV_OK;
+        }
+    }
+
+    return ret;
+}
+
+drv_status_t drv_usart_send_data_to_queue(drv_usart_t *usart, uint8_t *data, uint16_t len)
 {
     uint8_t *send_buf = NULL;
     drv_usart_buf_t drv_buf;
@@ -275,22 +360,9 @@ drv_status_t drv_usart_send_data(drv_usart_t *usart, uint8_t *data, uint16_t len
     return DRV_OK;
 }
 
-
-drv_status_t drv_usart_get_send_buf(drv_usart_t *usart, drv_usart_buf_t *buf)
-{
-    if (usart == NULL || buf == NULL)
-    {
-        return DRV_INVALID_ARG;
-    }
-    
-
-
-
-    return DRV_OK;
-}
-
 drv_status_t drv_usart_send_proccess(drv_usart_t *usart)
 {
+    drv_usart_buf_t drv_buf;
     drv_status_t ret = DRV_ERROR;
     if (usart == NULL)
     {
@@ -299,12 +371,7 @@ drv_status_t drv_usart_send_proccess(drv_usart_t *usart)
     /* check for pending tx buffers to send */
     if (osMessageQueueGet(usart->tx_work_queue, &drv_buf, NULL, osWaitForever) == osOK)
     {
-        /* start transmission of next buffer */ 
-        if(usart->tx_callback != NULL)
-        {
-            usart->tx_callback(usart->tx_ctx);
-        }
-        ret = DRV_OK;
+
     }
     return ret;
 }
