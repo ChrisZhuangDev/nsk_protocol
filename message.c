@@ -228,3 +228,39 @@ msg_status_t message_queue_reset(message_queue_t queue_id)
     return result;
 }
 
+/**
+ * @brief Process message using message dispatch table
+ * 
+ * Searches through a message dispatch table for a matching message ID and
+ * executes the corresponding callback function. This implements a table-driven
+ * message handler pattern commonly used for FSM and event-driven systems.
+ * 
+ * @param table Pointer to message dispatch table (array of msg_table entries)
+ * @param table_size Number of entries in the dispatch table
+ * @param msg Pointer to received message to process
+ * @param handle Optional context/handle to pass to callback function
+ * 
+ * @note If no matching message ID is found, the function returns silently
+ * @note The callback function is only invoked if it's not NULL
+ * 
+ * @see msg_table
+ */
+void message_table_proccess(const msg_table_t *table,uint16_t table_size, message_t* msg, void *ctx)
+{
+    if(table == NULL || msg == NULL)
+    {
+        return;
+    }
+    uint32_t i = 0;
+    for(i = 0; i < table_size; i++)
+    {
+        if(table[i].msg_id == msg->msg_id)
+        {
+            if(table[i].msg_cb != NULL)
+            {
+                table[i].msg_cb(ctx, msg);
+            }
+            break;
+        }
+    }
+}

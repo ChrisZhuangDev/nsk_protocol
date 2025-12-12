@@ -1,0 +1,14 @@
+{
+    "files.associations": {
+        "*.cpp": "cpp",
+        "hex_ascll.h": "c",
+        "stdint.h": "c",
+        "stdio.h": "c",
+        "comm_protocol.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "cstdint": "c",
+        "cmsis_os2.h": "c"
+    }
+}

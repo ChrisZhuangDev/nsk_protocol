@@ -18,24 +18,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "comm_def.h"
 
-#define COMM_PROTOCOL_MAX_DATA_LEN          64
-#define COMM_PROTOCOL_MAX_HEX_DATA_LEN      (COMM_PROTOCOL_MAX_DATA_LEN / 2)
-#define COMM_PROTOCOL_HEAD_TAIL_LEN         2
-#define COMM_PROTOCOL_MAX_VALID_DATA_LEN    (COMM_PROTOCOL_MAX_DATA_LEN - COMM_PROTOCOL_HEAD_TAIL_LEN)
-#define COMM_PROTOCOL_XOR_LEN               2
-#define COMM_PROTOCOL_MAX_BUFF_LEN          (COMM_PROTOCOL_MAX_DATA_LEN + COMM_PROTOCOL_XOR_LEN)
-
-/**
- * @brief Result codes for protocol operations
- */
-enum {
-    RESULT_OK = 0,              /**< Operation successful */
-    RESULT_ERROR = 1,           /**< General error */
-    RESULT_TIMEOUT = 2,         /**< Operation timeout */
-    RESULT_INCOMPLETE = 3,      /**< Data incomplete */
-    RESULT_RETRY_EXHAUSTED = 4, /**< Retry attempts exhausted */
-};
 
 /**
  * @brief Protocol decoder state machine states
@@ -83,19 +67,19 @@ typedef struct {
  * and setting the state machine to idle state.
  * 
  * @param decoder Pointer to decoder structure to initialize
- * @return RESULT_OK on success, RESULT_ERROR if decoder is NULL
+ * @return COMM_OK on success, COMM_ERROR if decoder is NULL
  * 
  * @note This function must be called before using any other decoder functions
  * 
  * Example usage:
  * @code
  * protocol_decoder_t decoder;
- * if (comm_protocol_decoder_init(&decoder) == RESULT_OK) {
+ * if (comm_protocol_decoder_init(&decoder) == COMM_OK) {
  *     // Decoder ready to use
  * }
  * @endcode
  */
-uint8_t comm_protocol_decoder_init(protocol_decoder_t *decoder);
+comm_result_t comm_protocol_decoder_init(protocol_decoder_t *decoder);
 
 /**
  * @brief Process incoming data through protocol decoder
@@ -107,7 +91,7 @@ uint8_t comm_protocol_decoder_init(protocol_decoder_t *decoder);
  * @param decoder Pointer to initialized decoder structure
  * @param buf Input data buffer containing raw bytes
  * @param len Length of input data buffer
- * @return RESULT_OK if a complete frame was decoded, RESULT_ERROR otherwise
+ * @return COMM_OK if a complete frame was decoded, COMM_ERROR otherwise
  * 
  * @note This function can be called multiple times with partial data.
  *       The decoder maintains its state across calls.
@@ -116,12 +100,12 @@ uint8_t comm_protocol_decoder_init(protocol_decoder_t *decoder);
  * Example usage:
  * @code
  * uint8_t rx_data[] = "@48656C6C6F*43";
- * if (comm_protocol_decoder_process(&decoder, rx_data, sizeof(rx_data)-1) == RESULT_OK) {
+ * if (comm_protocol_decoder_process(&decoder, rx_data, sizeof(rx_data)-1) == COMM_OK) {
  *     // Frame successfully decoded, callback was invoked
  * }
  * @endcode
  */
-uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf, uint16_t len);
+comm_result_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf, uint16_t len);
 
 /**
  * @brief Set callback function for decoded data
@@ -132,7 +116,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
  * @param decoder Pointer to decoder structure
  * @param callback Function pointer to be called on successful decode
  * @param user_data User-defined data to pass to callback function
- * @return RESULT_OK on success, RESULT_ERROR if decoder is NULL
+ * @return COMM_OK on success, COMM_ERROR if decoder is NULL
  * 
  * @note The callback function should not block for extended periods
  * @note The payload data passed to callback is only valid during the callback
@@ -146,7 +130,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
  * comm_protocol_decoder_set_callback(&decoder, my_callback, NULL);
  * @endcode
  */
-uint8_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol_decode_cb_t callback, void *user_data);
+comm_result_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol_decode_cb_t callback, void *user_data);
 
 /**
  * @brief Reset protocol decoder to idle state
@@ -155,7 +139,7 @@ uint8_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol
  * This is useful when communication errors occur or when starting fresh.
  * 
  * @param decoder Pointer to decoder structure to reset
- * @return RESULT_OK on success, RESULT_ERROR if decoder is NULL
+ * @return COMM_OK on success, COMM_ERROR if decoder is NULL
  * 
  * @note The callback function and user_data are preserved after reset
  * @note Debug output will show decoder state before reset if enabled
@@ -166,7 +150,7 @@ uint8_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol
  * comm_protocol_reset_decoder(&decoder);
  * @endcode
  */
-uint8_t comm_protocol_reset_decoder(protocol_decoder_t *decoder);
+comm_result_t comm_protocol_reset_decoder(protocol_decoder_t *decoder);
 
 /**
  * @brief Initialize protocol encoder
@@ -175,19 +159,19 @@ uint8_t comm_protocol_reset_decoder(protocol_decoder_t *decoder);
  * and preparing it for encoding operations.
  * 
  * @param encoder Pointer to encoder structure to initialize
- * @return RESULT_OK on success, RESULT_ERROR if encoder is NULL
+ * @return COMM_OK on success, COMM_ERROR if encoder is NULL
  * 
  * @note This function must be called before using the encoder
  * 
  * Example usage:
  * @code
  * protocol_encoder_t encoder;
- * if (comm_protocol_encoder_init(&encoder) == RESULT_OK) {
+ * if (comm_protocol_encoder_init(&encoder) == COMM_OK) {
  *     // Encoder ready to use
  * }
  * @endcode
  */
-uint8_t comm_protocol_encoder_init(protocol_encoder_t *encoder);
+comm_result_t comm_protocol_encoder_init(protocol_encoder_t *encoder);
 
 /**
  * @brief Encode payload data into protocol frame
@@ -198,7 +182,7 @@ uint8_t comm_protocol_encoder_init(protocol_encoder_t *encoder);
  * @param encoder Pointer to initialized encoder structure
  * @param payload Binary payload data to encode
  * @param payload_len Length of payload data in bytes
- * @return RESULT_OK on success, RESULT_ERROR on failure
+ * @return COMM_OK on success, COMM_ERROR on failure
  * 
  * @note Maximum payload length is COMM_PROTOCOL_MAX_VALID_DATA_LEN bytes
  * @note The XOR checksum is calculated over the entire frame including '@' and '*'
@@ -207,12 +191,12 @@ uint8_t comm_protocol_encoder_init(protocol_encoder_t *encoder);
  * Example usage:
  * @code
  * uint8_t payload[] = {0x48, 0x65, 0x6C, 0x6C, 0x6F}; // "Hello"
- * if (comm_protocol_encode(&encoder, payload, sizeof(payload)) == RESULT_OK) {
+ * if (comm_protocol_encode(&encoder, payload, sizeof(payload)) == COMM_OK) {
  *     // Send encoder.data with length encoder.data_len
  *     uart_send(encoder.data, encoder.data_len);
  * }
  * @endcode
  */
-uint8_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload, uint16_t payload_len);
+comm_result_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload, uint16_t payload_len);
 
 #endif // COMM_PROTOCOL_H

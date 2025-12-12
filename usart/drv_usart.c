@@ -2,9 +2,7 @@
 #include "cmsis_os2.h"
 #include <stddef.h>
 
-/* callback types: rx callback provides data pointer, length and user context */
-typedef void (*drv_usart_rx_callback_t)(const uint8_t *data, uint16_t len, void *ctx);
-typedef void (*drv_usart_tx_callback_t)(void *ctx);
+
 
 #define DRV_USART_MAX_BUF_NUM    10U
 typedef struct{
@@ -36,7 +34,7 @@ typedef struct{
     osSemaphoreId_t tx_semaphore;
 }drv_usart_t;
 
-drv_status_t mem_pool_init(mem_pool_t *pool, uint8_t *buffer, uint8_t block_size, uint8_t block_count)
+static drv_status_t mem_pool_init(mem_pool_t *pool, uint8_t *buffer, uint8_t block_size, uint8_t block_count)
 {
     uint8_t i = 0U;
     uint8_t *buf;
@@ -67,7 +65,7 @@ drv_status_t mem_pool_init(mem_pool_t *pool, uint8_t *buffer, uint8_t block_size
     return DRV_OK;
 }
 
-drv_status_t mem_pool_deinit(mem_pool_t *pool)
+static drv_status_t mem_pool_deinit(mem_pool_t *pool)
 {
     if(pool == NULL)
     {
@@ -81,7 +79,7 @@ drv_status_t mem_pool_deinit(mem_pool_t *pool)
     return DRV_OK;
 }
 
-uint8_t* mem_pool_alloc(mem_pool_t *pool)
+static uint8_t* mem_pool_alloc(mem_pool_t *pool)
 {
     uint8_t *buf = NULL;
     if(pool == NULL || pool->queue == NULL )
@@ -94,7 +92,7 @@ uint8_t* mem_pool_alloc(mem_pool_t *pool)
     return buf;
 }
 
-drv_status_t mem_pool_free(mem_pool_t *pool, uint8_t *ptr)
+static drv_status_t mem_pool_free(mem_pool_t *pool, uint8_t *ptr)
 {
     uint8_t *block_ptr = NULL;
     uint8_t i = 0U;
@@ -198,6 +196,27 @@ drv_status_t drv_usart_deinit(drv_usart_t *usart)
     return ret;
 }
 
+drv_status_t drv_usart_set_rx_callback(drv_usart_t *usart, drv_usart_rx_callback_t callback, void *ctx)
+{
+    if (usart == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+    usart->rx_callback = callback;
+    usart->rx_ctx = ctx;
+    return DRV_OK;
+}
+
+drv_status_t drv_usart_set_tx_callback(drv_usart_t *usart, drv_usart_tx_callback_t callback, void *ctx)
+{
+    if (usart == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+    usart->tx_callback = callback;
+    usart->tx_ctx = ctx;
+    return DRV_OK;
+}
 
 uint8_t *drv_usart_rx_isr_action(drv_usart_t *usart, uint8_t *data, uint16_t len)
 {
@@ -252,12 +271,11 @@ drv_status_t drv_usart_rx_get_data(drv_usart_t *usart, uint8_t **data, uint16_t 
 
 drv_status_t drv_usart_release_rx_buffer(drv_usart_t *usart, uint8_t *buf)
 {
-    drv_status_t ret = DRV_INVALID_ARG;
-    if (usart != NULL && buf != NULL)
+    if(usart == NULL || buf == NULL)
     {
-        ret = mem_pool_free(&usart->rx_mem_pool, buf);
+        return DRV_INVALID_ARG;
     }
-    return ret;
+    return mem_pool_free(&usart->rx_mem_pool, buf);
 }
 
 
@@ -275,67 +293,45 @@ drv_status_t drv_usart_tx_isr_action(drv_usart_t *usart)
     {
         (void)osSemaphoreRelease(usart->tx_semaphore);
     }
-
+    if(usart->tx_callback != NULL)
+    {
+        usart->tx_callback(usart->tx_ctx);
+    }
     return ret;
 }
 
-drv_status_t drv_usart_tx_send_before(drv_usart_t *usart)
+drv_status_t drv_usart_tx_acquire_sem(drv_usart_t *usart, uint32_t timeout)
 {
     drv_status_t ret = DRV_ERROR;
-    if (usart == NULL)
+    if (usart == NULL || usart->tx_semaphore != NULL)
     {
         return DRV_INVALID_ARG;
     }
 
-    if(usart->tx_semaphore != NULL)
+    if(osSemaphoreAcquire(usart->tx_semaphore, timeout) == osOK)
     {
-        if(osSemaphoreAcquire(usart->tx_semaphore, osWaitForever) == osOK)
-        {
-            ret = DRV_OK;
-        }
+        ret = DRV_OK;
     }
 
     return ret;
 }
 
-drv_status_t drv_usart_tx_send_after(drv_usart_t *usart)
+drv_status_t drv_usart_tx_release_sem(drv_usart_t *usart)
 {
     drv_status_t ret = DRV_ERROR;
-    if (usart == NULL)
+    if (usart == NULL || usart->tx_semaphore != NULL)
     {
         return DRV_INVALID_ARG;
     }
 
-    if(usart->tx_semaphore != NULL)
+    if(osSemaphoreRelease(usart->tx_semaphore) == osOK)
     {
-        if(osSemaphoreRelease(usart->tx_semaphore) == osOK)
-        {
-            ret = DRV_OK;
-        }
+        ret = DRV_OK;
     }
 
     return ret;
 }
 
-
-drv_status_t drv_usart_tx_send_(drv_usart_t *usart)
-{
-    drv_status_t ret = DRV_ERROR;
-    if (usart == NULL)
-    {
-        return DRV_INVALID_ARG;
-    }
-
-    if(usart->tx_semaphore != NULL)
-    {
-        if(osSemaphoreAcquire(usart->tx_semaphore, osWaitForever) == osOK)
-        {
-            ret = DRV_OK;
-        }
-    }
-
-    return ret;
-}
 
 drv_status_t drv_usart_send_data_to_queue(drv_usart_t *usart, uint8_t *data, uint16_t len)
 {
@@ -360,18 +356,31 @@ drv_status_t drv_usart_send_data_to_queue(drv_usart_t *usart, uint8_t *data, uin
     return DRV_OK;
 }
 
-drv_status_t drv_usart_send_proccess(drv_usart_t *usart)
+drv_status_t drv_usart_tx_get_data(drv_usart_t *usart, uint8_t **data, uint16_t *len)
 {
     drv_usart_buf_t drv_buf;
-    drv_status_t ret = DRV_ERROR;
-    if (usart == NULL)
+    if (usart == NULL || data == NULL || len == NULL)
     {
         return DRV_INVALID_ARG;
     }
-    /* check for pending tx buffers to send */
-    if (osMessageQueueGet(usart->tx_work_queue, &drv_buf, NULL, osWaitForever) == osOK)
+    /* check for pending tx buffers to process */
+    if (osMessageQueueGet(usart->tx_work_queue, &drv_buf, NULL, 0U) == osOK)
     {
-
+        *data = drv_buf.buf;
+        *len = drv_buf.len;
     }
-    return ret;
+    else
+    {
+        return DRV_ERROR;
+    }
+    return DRV_OK;
+}
+
+drv_status_t drv_usart_tx_relase_buf(drv_usart_t *usart, uint8_t *buf)
+{
+    if(usart == NULL || buf == NULL)
+    {
+        return DRV_INVALID_ARG;
+    }
+    return mem_pool_free(&usart->tx_mem_pool, buf);
 }

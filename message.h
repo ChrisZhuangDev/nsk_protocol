@@ -42,6 +42,13 @@ typedef struct{
     uint32_t msg_len;     ///< Length of message data in bytes
 }message_t;
 
+typedef void(*msg_callback)(void* ctx, message_t* msg);
+
+typedef struct{
+    uint32_t msg_id;
+    msg_callback msg_cb;
+}msg_table_t;
+
 /**
  * @brief Create a new message queue
  * 
@@ -168,4 +175,25 @@ uint32_t message_queue_get_free(message_queue_t queue_id);
  */
 msg_status_t message_queue_reset(message_queue_t queue_id);
 
+/**
+ * @brief Process message using message dispatch table
+ * 
+ * Searches through a message dispatch table for a matching message ID and
+ * executes the corresponding callback function. This implements a table-driven
+ * message handler pattern commonly used for FSM and event-driven systems.
+ * 
+ * The function iterates through the dispatch table linearly until it finds
+ * a matching msg_id, then invokes the associated callback. If no match is
+ * found, the function returns silently without error.
+ * 
+ * @param table Pointer to message dispatch table (array of msg_table entries, must not be NULL)
+ * @param table_size Number of entries in the dispatch table
+ * @param msg Pointer to received message to process (must not be NULL)
+ * @param ctx Optional context/handle to pass to callback function (can be NULL)
+ * 
+ * @note If no matching message ID is found, the function returns silently
+ * @note The callback function is only invoked if it's not NULL
+ * @note The function performs linear search, so for large tables consider optimization
+ */
+void message_table_proccess(const msg_table_t *table,uint16_t table_size, message_t* msg, void *ctx);
  #endif

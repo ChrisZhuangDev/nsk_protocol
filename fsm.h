@@ -54,7 +54,7 @@ typedef uint8_t event_t;
  * engine interface and localises application-specific data to application
  * code.
  */
-typedef void (*action_fn_t)(void);
+typedef void (*action_fn_t)(void* handle);
 
 /**
  * @struct fsm_transition
@@ -85,6 +85,7 @@ typedef struct fsm {
     const struct fsm_transition *table; /**< read-only transition table */
     size_t table_sz;                    /**< number of entries in table */
     state_t state;                      /**< current state */
+    void* ctx;                          /**< optional user context pointer */
     /* optional: const char *name; void *user_ctx; mutex_t *lock; */
 } fsm_t;
 
@@ -103,7 +104,7 @@ typedef struct fsm {
  * @param[in] table_sz Number of entries in `table`.
  * @param[in] initial_state Initial value to store in `fsm->state`.
  */
-void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, state_t initial_state);
+void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, state_t initial_state, void* ctx);
 
 
 /**

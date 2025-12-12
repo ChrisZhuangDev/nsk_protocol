@@ -35,18 +35,18 @@
  * @param len Length of input buffer
  * @param xor_init Initial XOR value (typically 0)
  * @param xor_out Pointer to store calculated XOR result
- * @return RESULT_OK on success, RESULT_ERROR if parameters are invalid
+ * @return COMM_OK on success, COMM_ERROR if parameters are invalid
  * 
  * @note This is an internal static function used by the protocol implementation
  * @note All bytes in the buffer are XORed sequentially
  * 
  * @internal
  */
-static uint8_t comm_protocol_cal_xor(const uint8_t *buf, uint16_t len ,uint8_t xor_init ,uint8_t *xor_out)
+static comm_result_t comm_protocol_cal_xor(const uint8_t *buf, uint16_t len ,uint8_t xor_init ,uint8_t *xor_out)
 {
     uint16_t i = 0;
     uint8_t xor_val = 0;
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (buf != NULL && len > 0 && xor_out != NULL)
     {
         xor_val = xor_init;
@@ -55,7 +55,7 @@ static uint8_t comm_protocol_cal_xor(const uint8_t *buf, uint16_t len ,uint8_t x
             xor_val ^= buf[i];
         }
         *xor_out  = xor_val;
-        ret = RESULT_OK;
+        ret = COMM_OK;
     }
     return ret;
 }
@@ -196,7 +196,7 @@ static void comm_protocol_decode_trigger_callback(protocol_decoder_t *decoder, u
  * the payload data and compared with the 2-digit hex checksum in the frame.
  * 
  * @param decoder Pointer to decoder structure containing data and received checksum
- * @return RESULT_OK if checksum matches, RESULT_ERROR if mismatch or invalid parameters
+ * @return COMM_OK if checksum matches, COMM_ERROR if mismatch or invalid parameters
  * 
  * @note The XOR is calculated over the payload data only (excluding frame markers)
  * @note Received checksum is in ASCII hex format (2 characters)
@@ -204,20 +204,20 @@ static void comm_protocol_decode_trigger_callback(protocol_decoder_t *decoder, u
  * 
  * @internal
  */
-static uint8_t comm_protocol_decode_check_xor(protocol_decoder_t *decoder)
+static comm_result_t comm_protocol_decode_check_xor(protocol_decoder_t *decoder)
 {
     uint8_t xor_val = 0;
     uint8_t xor_high_byte = 0;
     uint8_t xor_low_byte = 0;
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (decoder != NULL && decoder->data_len > 0)
     {
         comm_protocol_cal_xor(decoder->data, decoder->data_len, 0, &xor_val);
         uint8_to_hex_chars(xor_val,&xor_high_byte ,&xor_low_byte);
         if (xor_high_byte  == decoder->xor[0] && xor_low_byte == decoder->xor[1])
-            ret = RESULT_OK;
+            ret = COMM_OK;
     }
-    if(ret != RESULT_OK)
+    if(ret != COMM_OK)
     {
         DEBUG("XOR check failed: calculated %02X%02X, received %02X%02X\n", 
               (unsigned)xor_high_byte, (unsigned)xor_low_byte,
@@ -235,7 +235,7 @@ static uint8_t comm_protocol_decode_check_xor(protocol_decoder_t *decoder)
  * 
  * @param decoder Pointer to decoder structure
  * @param byte Current input byte to process
- * @return RESULT_OK if a complete valid frame was processed, RESULT_ERROR otherwise
+ * @return COMM_OK if a complete valid frame was processed, COMM_ERROR otherwise
  * 
  * @note State machine handles: IDLE -> HEAD -> DATA -> TAIL -> XOR -> IDLE
  * @note Invalid sequences cause reset to IDLE state
@@ -251,9 +251,9 @@ static uint8_t comm_protocol_decode_check_xor(protocol_decoder_t *decoder)
  * 
  * @internal
  */
-static uint8_t comm_protocol_decode_state_machine(protocol_decoder_t *decoder, uint8_t byte)
+static comm_result_t comm_protocol_decode_state_machine(protocol_decoder_t *decoder, uint8_t byte)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (decoder != NULL)
     {
         // Pre-validation: Check if current byte is valid for protocol
@@ -386,14 +386,14 @@ static uint8_t comm_protocol_decode_state_machine(protocol_decoder_t *decoder, u
  * 
  * Resets all decoder fields to zero and sets state to IDLE.
  */
-uint8_t comm_protocol_decoder_init(protocol_decoder_t *decoder)
+comm_result_t comm_protocol_decoder_init(protocol_decoder_t *decoder)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (decoder != NULL)
     {
         memset(decoder, 0, sizeof(protocol_decoder_t));
         decoder->state = PROTOCOL_DECODE_STATE_IDLE;
-        ret = RESULT_OK;
+        ret = COMM_OK;
     }
     return ret;
 }
@@ -407,9 +407,9 @@ uint8_t comm_protocol_decoder_init(protocol_decoder_t *decoder)
  * - Converts hex string to bytes and triggers callback
  * - Validates data length is even (hex pairs)
  */
-uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf, uint16_t len)
+comm_result_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf, uint16_t len)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     uint8_t i = 0;
     uint8_t bytes_buf[COMM_PROTOCOL_MAX_HEX_DATA_LEN] = {0};
     uint16_t bytes_len = 0;
@@ -423,7 +423,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
         ret = comm_protocol_decode_state_machine(decoder, buf[i]);
         
         // Check if a complete valid frame was decoded
-        if (ret == RESULT_OK)
+        if (ret == COMM_OK)
         {
             // Skip frame header '@', extract data portion (excluding frame tail '*')
             data_start = &decoder->data[1];
@@ -434,7 +434,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
             {
                 // Data length is not even, cannot convert to byte array
                 DEBUG("Data length is not even, cannot convert to bytes\n");
-                ret = RESULT_ERROR;
+                ret = COMM_ERROR;
                 continue;  // Skip this frame, continue processing remaining bytes
             }
             
@@ -448,7 +448,7 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
     }
     
     // Output debug information if parsing failed
-    if (ret == RESULT_ERROR)
+    if (ret == COMM_ERROR)
     {
         DEBUG("parser error\n");  // Fixed typo: "paraser" -> "parser"
         comm_protocol_dump_decoder(decoder, buf, len);
@@ -462,14 +462,14 @@ uint8_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t *buf,
  * 
  * Simply stores the callback pointer and user data in decoder structure.
  */
-uint8_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol_decode_cb_t callback, void *user_data)
+comm_result_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol_decode_cb_t callback, void *user_data)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (decoder !=  NULL)
     {
         decoder->callback = callback;
         decoder->user_data = user_data;
-        ret = RESULT_OK;
+        ret = COMM_OK;
     }
     return ret;
 }
@@ -480,16 +480,16 @@ uint8_t comm_protocol_decoder_set_callback(protocol_decoder_t *decoder, protocol
  * Clears all data but preserves the callback and user_data pointers.
  * Outputs debug information before reset if DEBUG_COMM_PROTOCOL is enabled.
  */
-uint8_t comm_protocol_reset_decoder(protocol_decoder_t *decoder)
+comm_result_t comm_protocol_reset_decoder(protocol_decoder_t *decoder)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (decoder !=  NULL)
     {
         DEBUG("protoco decoder reset\n");
         comm_protocol_dump_decoder(decoder, NULL, 0);
         memset(decoder, 0, sizeof(protocol_decoder_t));
         decoder->state = PROTOCOL_DECODE_STATE_IDLE;
-        ret = RESULT_OK;
+        ret = COMM_OK;
     }
     return ret;
 }
@@ -499,13 +499,13 @@ uint8_t comm_protocol_reset_decoder(protocol_decoder_t *decoder)
  * 
  * Simply zeros out the encoder structure.
  */
-uint8_t comm_protocol_encoder_init(protocol_encoder_t *encoder)
+comm_result_t comm_protocol_encoder_init(protocol_encoder_t *encoder)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     if (encoder !=  NULL)
     {
         memset(encoder, 0, sizeof(protocol_encoder_t));
-        ret = RESULT_OK;
+        ret = COMM_OK;
     }
     return ret;
 }
@@ -524,9 +524,9 @@ uint8_t comm_protocol_encoder_init(protocol_encoder_t *encoder)
  * 
  * Example: payload {0x48, 0x65, 0x6C, 0x6C, 0x6F} -> "@48656C6C6F*43"
  */
-uint8_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload, uint16_t payload_len)
+comm_result_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload, uint16_t payload_len)
 {
-    uint8_t ret = RESULT_ERROR;
+    comm_result_t ret = COMM_ERROR;
     uint16_t index = 0;
     uint16_t hex_str_len = 0;
     uint8_t xor_val = 0;
@@ -552,7 +552,7 @@ uint8_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload
             // Step 4: Calculate XOR checksum over the entire frame so far
             // This includes: '@' + hex_payload_data + '*'
             // The checksum provides integrity verification for the frame
-            if(comm_protocol_cal_xor(encoder->data, index, 0, &xor_val) == RESULT_OK)
+            if(comm_protocol_cal_xor(encoder->data, index, 0, &xor_val) == COMM_OK)
             {
                 // Step 5: Convert 8-bit XOR value to 2 ASCII hex characters
                 // Example: XOR value 0x43 -> high='4', low='3'
@@ -564,7 +564,7 @@ uint8_t comm_protocol_encode(protocol_encoder_t *encoder, const uint8_t *payload
                     
                     // Step 7: Store final frame length and mark encoding as successful
                     encoder->data_len = index;
-                    ret = RESULT_OK;
+                    ret = COMM_OK;
                     
                     // Frame is now complete and ready for transmission
                     // Format: @[HEX_PAYLOAD]*[CHECKSUM]

@@ -35,7 +35,7 @@
  * @param[in] table_sz Number of elements in @p table.
  * @param[in] initial_state Initial state to set in the FSM.
  */
-void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, state_t initial_state)
+void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, state_t initial_state, void* ctx)
 {
     if (fsm == NULL) {
         return;
@@ -44,6 +44,7 @@ void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, s
     fsm->table = table;
     fsm->table_sz = table_sz;
     fsm->state = initial_state;
+    fsm->ctx = ctx;
 }
 
 
@@ -78,7 +79,7 @@ uint8_t fsm_process_event(fsm_t *fsm, event_t event)
         const struct fsm_transition *t = &fsm->table[i];
         if ((t->state == fsm->state) && (t->event == event)) {
             if (t->action != NULL) {
-                t->action();
+                t->action(fsm->ctx);
             }
 
             fsm->state = t->next_state;
