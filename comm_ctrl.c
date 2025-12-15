@@ -223,12 +223,12 @@ static bool comm_cmd_queue_enqueue_safe(comm_ctrl_t *ctrl, comm_cmd_queue_t *que
     if ((ctrl != NULL) && (queue != NULL) && (cmd != NULL))
     {
         /* Acquire mutex */
-        if (osSemaphoreAcquire(ctrl->queue_mutex, osWaitForever) == osOK)
+        if (osMutexAcquire(ctrl->queue_mutex, osWaitForever) == osOK)
         {
             result = comm_cmd_queue_enqueue(queue, cmd);
             
             /* Release mutex */
-            (void)osSemaphoreRelease(ctrl->queue_mutex);
+            (void)osMutexRelease(ctrl->queue_mutex);
         }
     }
     
@@ -245,12 +245,12 @@ static bool comm_cmd_queue_dequeue_safe(comm_ctrl_t *ctrl, comm_cmd_queue_t *que
     if ((ctrl != NULL) && (queue != NULL) && (cmd != NULL))
     {
         /* Acquire mutex */
-        if (osSemaphoreAcquire(ctrl->queue_mutex, osWaitForever) == osOK)
+        if (osMutexAcquire(ctrl->queue_mutex, osWaitForever) == osOK)
         {
             result = comm_cmd_queue_dequeue(queue, cmd);
             
             /* Release mutex */
-            (void)osSemaphoreRelease(ctrl->queue_mutex);
+            (void)osMutexRelease(ctrl->queue_mutex);
         }
     }
     
@@ -356,11 +356,11 @@ static void comm_ctrl_set_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cm
 {
     if(comm_ctrl != NULL && cmd != NULL)
     {
-        if (osSemaphoreAcquire(comm_ctrl->queue_mutex, osWaitForever) == osOK)
+        if (osMutexAcquire(comm_ctrl->queue_mutex, osWaitForever) == osOK)
         {
             memcpy(&comm_ctrl->period_cmd, cmd, sizeof(comm_data_t));
             
-            (void)osSemaphoreRelease(comm_ctrl->queue_mutex);
+            (void)osMutexRelease(comm_ctrl->queue_mutex);
         }
     }
 }
@@ -369,11 +369,11 @@ static void comm_ctrl_get_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cm
 {
     if(comm_ctrl != NULL && cmd != NULL)
     {
-        if (osSemaphoreAcquire(comm_ctrl->queue_mutex, osWaitForever) == osOK)
+        if (osMutexAcquire(comm_ctrl->queue_mutex, osWaitForever) == osOK)
         {
             memcpy(cmd, &comm_ctrl->period_cmd, sizeof(comm_data_t));
             
-            (void)osSemaphoreRelease(comm_ctrl->queue_mutex);
+            (void)osMutexRelease(comm_ctrl->queue_mutex);
         }
     }
 }
@@ -416,7 +416,7 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
                     COMM_RECV_DATA_QUEUE_SIZE);
 
         /* Create mutex for queue protection */
-        comm_ctrl->queue_mutex = osSemaphoreNew(1U, 1U, NULL);
+        comm_ctrl->queue_mutex = osMutexNew(NULL);
         if (comm_ctrl->queue_mutex == NULL)
         {
             ret = COMM_ERROR;

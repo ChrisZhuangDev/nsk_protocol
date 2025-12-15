@@ -63,7 +63,7 @@ typedef struct {
     comm_data_t single_cmd_buffer[COMM_SINGLE_CMD_QUEUE_SIZE]; /* 单次命令缓冲区 */
     comm_cmd_queue_t recv_data_queue;  /* 接收数据队列 */
     comm_data_t recv_data_buffer[COMM_RECV_DATA_QUEUE_SIZE];     /* 接收数据缓冲区 */
-    osSemaphoreId_t queue_mutex;        /* 队列互斥锁 */
+    osMutexId_t queue_mutex;            /* 队列互斥锁 */
     osTimerId_t preiod_timer;
     osTimerId_t timeout_timer;
 }comm_ctrl_t;
