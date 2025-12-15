@@ -20,7 +20,7 @@ static inline uint64_t get_timestamp_ms(void) {
 #define DEBUG() do {} while(0)
 #endif
 
-enum{
+typedef enum{
     COMM_CTRL_EVENT_NONE = 0,
     COMM_CTRL_EVENT_START,
     COMM_CTRL_EVENT_SEND_CYCLE,
@@ -29,86 +29,70 @@ enum{
     COMM_CTRL_EVENT_ERROR,
     COMM_CTRL_EVENT_RESTART,
     COMM_CTRL_EVENT_MAX,
-};
+}comm_fsm_event_t;
 
-enum{
+typedef enum{
     COMM_CTRL_STATE_NONE = 0,
     COMM_CTRL_STATE_IDLE,
     COMM_CTRL_STATE_WAIT_RESP,
     COMM_CTRL_STATE_STOP,
     COMM_CTRL_STATE_ERROR,
-};
+}comm_fsm_state_t;
+
 static void comm_ctrl_timeout_timer_start(comm_ctrl_t *comm_ctrl, uint16_t timeout_ms);
 static void comm_ctrl_preiod_timer_start(comm_ctrl_t *comm_ctrl, uint16_t period_ms);
 static void comm_ctrl_timeout_timer_stop(comm_ctrl_t *comm_ctrl);
 static bool comm_cmd_queue_dequeue_safe(comm_ctrl_t *ctrl, comm_cmd_queue_t *queue, comm_data_t *cmd);
 static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_cmd_t* cmd ,bool is_reset_retry);
-
+static void comm_ctrl_preiod_timer_stop(comm_ctrl_t *comm_ctrl);
+static void comm_ctrl_fsm_actrion_send_cycle(void* handle);
+static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl);
 static void comm_ctrl_fsm_actrion_start(void* handle)
 {
     DEBUG("comm ctrl fsm started\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
-    (void)fsm_fire_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE, comm_ctrl);
+    comm_ctrl->cur_cmd.cmd_type = COMM_TYPE_NONE;
+    comm_ctrl_preiod_timer_start(comm_ctrl, 2000U); /* Start period timer with 1s period */
+    comm_ctrl_send_cmd(comm_ctrl);
+    fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
 }
 
 static void comm_ctrl_fsm_actrion_send_cycle(void* handle)
 {
     DEBUG("cycle arrived!!!!!\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
-    comm_data_t cmd_data;
-    comm_data_t* send_cmd_data = NULL;
-    comm_type_t cmd_type = COMM_TYPE_NONE;
-    if (comm_cmd_queue_dequeue_safe(comm_ctrl, &comm_ctrl->init_cmd_queue, &cmd_data))
-    {
-        send_cmd_data = &cmd_data;
-        cmd_type = COMM_TYPE_INIT;
-    }
-    else if(comm_cmd_queue_dequeue_safe(comm_ctrl, &comm_ctrl->single_cmd_queue, &cmd_data))
-    {
-        send_cmd_data = &cmd_data;
-        cmd_type = COMM_TYPE_SINGLE;
-    }
-    else
-    {
-        send_cmd_data = &comm_ctrl->period_cmd;
-        cmd_type = COMM_TYPE_PERIOD;
-    }
-    if((cmd_type == COMM_TYPE_PERIOD) && (comm_ctrl->cur_cmd.cmd_type == cmd_type))
-    {
-        //定周期命令，不需要重置retry_count
-        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, false);
-    }
-    else 
-    {
-        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, true);
-        comm_ctrl->cur_cmd.cmd_type = cmd_type;
-    }
-    comm_ctrl->cur_cmd.timeout = 1000U;
-    comm_ctrl_timeout_timer_start(comm_ctrl, comm_ctrl->cur_cmd.timeout); /* Start timeout timer with 5s timeout */
+    (void)comm_ctrl_send_cmd(comm_ctrl);
 
 }
+
 static void comm_ctrl_fsm_actrion_recv_resp(void* handle)
 {
     DEBUG("Reply received successfully!!!!! \n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
-    
     comm_ctrl_timeout_timer_stop(comm_ctrl); /* Stop timeout timer */
-
 }
+
 static void comm_ctrl_fsm_actrion_resp_timeout(void* handle)
 {
     DEBUG("resp timeout\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
-    if(comm_ctrl->cur_cmd.retry_count > 0U)
+    if((--comm_ctrl->cur_cmd.retry_count) > 0U)
     {
-        comm_ctrl->cur_cmd.retry_count--;
         DEBUG("retry send command, remaining retry count: %u\n", comm_ctrl->cur_cmd.retry_count);
-        comm_ctrl_fsm_actrion_send_cycle(handle);
     }
     else
     {
+        fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_ERROR);
         DEBUG("command retry exhausted\n");
     }
+}
+
+static void comm_ctrl_fsm_actrion_error(void* handle)
+{
+    DEBUG("comm ctrl fsm entered error state\n");
+    comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
+    comm_ctrl_timeout_timer_stop(comm_ctrl); /* Stop timeout timer */
+    comm_ctrl_preiod_timer_stop(comm_ctrl); /* Stop period timer */
 }
 
 static const struct fsm_transition comm_ctrl_fsm_transitions[] = {
@@ -116,7 +100,7 @@ static const struct fsm_transition comm_ctrl_fsm_transitions[] = {
     {COMM_CTRL_STATE_IDLE,          COMM_CTRL_EVENT_SEND_CYCLE,     COMM_CTRL_STATE_WAIT_RESP,  comm_ctrl_fsm_actrion_send_cycle    },
     {COMM_CTRL_STATE_WAIT_RESP,     COMM_CTRL_EVENT_RECV_RESP,      COMM_CTRL_STATE_IDLE,       comm_ctrl_fsm_actrion_recv_resp     },
     {COMM_CTRL_STATE_WAIT_RESP,     COMM_CTRL_EVENT_RECV_TIMEOUT,   COMM_CTRL_STATE_IDLE,       comm_ctrl_fsm_actrion_resp_timeout  },
-    {COMM_CTRL_STATE_IDLE,          COMM_CTRL_EVENT_ERROR,          COMM_CTRL_STATE_ERROR,      NULL                                },
+    {COMM_CTRL_STATE_IDLE,          COMM_CTRL_EVENT_ERROR,          COMM_CTRL_STATE_ERROR,      comm_ctrl_fsm_actrion_error         },
     {COMM_CTRL_STATE_ERROR,         COMM_CTRL_EVENT_RESTART,        COMM_CTRL_STATE_IDLE,       comm_ctrl_fsm_actrion_start         },
 };
 #define COMM_CTRL_FSM_TRANSITIONS_SIZE   (sizeof(comm_ctrl_fsm_transitions) / sizeof(comm_ctrl_fsm_transitions[0]))
@@ -419,19 +403,17 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
         comm_ctrl->msg_queue = mesasge_queue_create(16U);
         /* Initialize FSM */
         fsm_init(&comm_ctrl->fsm, comm_ctrl_fsm_transitions, 
-                 COMM_CTRL_FSM_TRANSITIONS_SIZE, COMM_CTRL_STATE_IDLE, 
+                 COMM_CTRL_FSM_TRANSITIONS_SIZE, COMM_CTRL_STATE_NONE, 
                  (void *)comm_ctrl);
-        
-        /* Initialize internal command queues with different sizes */
-        comm_cmd_queue_init(&comm_ctrl->init_cmd_queue, 
-                           comm_ctrl->init_cmd_buffer, 
-                           COMM_INIT_CMD_QUEUE_SIZE);
-        
+        fsm_create_event_queue(&comm_ctrl->fsm, 4U);
+        /* Single command queues */
         comm_cmd_queue_init(&comm_ctrl->single_cmd_queue, 
                            comm_ctrl->single_cmd_buffer, 
                            COMM_SINGLE_CMD_QUEUE_SIZE);
         
-        
+        comm_cmd_queue_init(&comm_ctrl->recv_data_queue, 
+                    comm_ctrl->recv_data_buffer, 
+                    COMM_RECV_DATA_QUEUE_SIZE);
 
         /* Create mutex for queue protection */
         comm_ctrl->queue_mutex = osSemaphoreNew(1U, 1U, NULL);
@@ -447,12 +429,7 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
 
         comm_ctrl_timeout_timer_init(comm_ctrl);
         comm_ctrl_preiod_timer_init(comm_ctrl);
-        comm_ctrl_preiod_timer_start(comm_ctrl, 2000U); /* Start period timer with 1s period */
-        // comm_ctrl_timeout_timer_start(comm_ctrl, 1000U); /* Start timeout timer with 5s timeout */
-
         comm_ctrl->period_cmd.comm_len = 1U; /* No period command initially */
-
-
     }
     else
     {
@@ -462,17 +439,43 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
     return ret;
 }
 
+comm_result_t comm_ctrl_start(comm_ctrl_t *comm_ctrl)
+{
+    comm_result_t ret = COMM_ERROR;
+    if (comm_ctrl != NULL)
+    {
+        message_t msg;
+        fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_START);
+        msg.msg_id = MESSAGE_ID_COMM_NOTIFY;
+        msg.msg_data = NULL;
+        msg.msg_len = 0;
+        comm_ctrl_send_msg(comm_ctrl, &msg);
+        ret = COMM_OK;
+    }
+    return ret;
+}
+
+static void comm_ctrl_notify(void* ctx, message_t* msg);
 static void comm_ctrl_update_period_cmd(void* ctx, message_t* msg);
 static void comm_ctrl_send_timeout(void* ctx, message_t* msg);
 static void comm_ctrl_send_cycle(void* ctx, message_t* msg);
 static void comm_ctrl_recv_data(void* ctx, message_t* msg);
 static const msg_table_t comm_ctrl_msg_table[] = {
+    {MESSAGE_ID_COMM_NOTIFY,                comm_ctrl_notify},
     {MESSAGE_ID_COMM_UPDATE_PERIOD_CMD,     comm_ctrl_update_period_cmd},
     {MESSAGE_ID_COMM_SEND_TIMEOUT,          comm_ctrl_send_timeout},
     {MESSAGE_ID_COMM_SEND_CYCLE,            comm_ctrl_send_cycle},
     {MESSAGE_ID_COMM_RECV_DATA,             comm_ctrl_recv_data},
 };
-
+#define COMM_CTRL_MSG_TABLE_SIZE   (sizeof(comm_ctrl_msg_table) / sizeof(comm_ctrl_msg_table[0]))
+static void comm_ctrl_notify(void* ctx, message_t* msg)
+{
+    comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)ctx;
+    if(comm_ctrl == NULL || msg == NULL)
+    {
+        return;
+    }
+}
 
 static void comm_ctrl_update_period_cmd(void* ctx, message_t* msg)
 {
@@ -490,12 +493,7 @@ static void comm_ctrl_send_timeout(void* ctx, message_t* msg)
         return;
     }
 
-    fsm_process_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_TIMEOUT);
-    if(comm_ctrl->pending_error)
-    {
-        comm_ctrl->pending_error = false;
-        fsm_process_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_ERROR);
-    }
+    fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_TIMEOUT);
 }
 static void comm_ctrl_send_cycle(void* ctx, message_t* msg)
 {
@@ -504,7 +502,7 @@ static void comm_ctrl_send_cycle(void* ctx, message_t* msg)
     {
         return;
     }
-    fsm_process_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
+    fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
 }
 static void comm_ctrl_recv_data(void* ctx, message_t* msg)
 {
@@ -515,7 +513,7 @@ static void comm_ctrl_recv_data(void* ctx, message_t* msg)
     }
     if(1)
     {
-        fsm_process_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
+        fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
     }
 }
 
@@ -526,11 +524,11 @@ comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl)
         return COMM_ERROR;
     }
     message_t msg;
-    if(message_queue_receive(comm_ctrl->msg_queue, &msg, 0U) != MSG_OK)
+    if(message_queue_receive(comm_ctrl->msg_queue, &msg, 0U) == MSG_OK)
     {
-        message_table_proccess(comm_ctrl_msg_table, sizeof(comm_ctrl_msg_table)/sizeof(comm_ctrl_msg_table[0]), &msg, (void *)comm_ctrl);
+        message_table_proccess(comm_ctrl_msg_table, COMM_CTRL_MSG_TABLE_SIZE, &msg, (void *)comm_ctrl);
+        fsm_poll(&comm_ctrl->fsm);
     }
-
     return COMM_OK;
 }
 
@@ -544,6 +542,36 @@ comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
     {
         return COMM_ERROR;
     }
+    return COMM_OK;
+}
+
+static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
+{
+    comm_data_t cmd_data;
+    comm_data_t* send_cmd_data = NULL;
+    comm_type_t cmd_type = COMM_TYPE_NONE;
+    if(comm_cmd_queue_dequeue_safe(comm_ctrl, &comm_ctrl->single_cmd_queue, &cmd_data))
+    {
+        send_cmd_data = &cmd_data;
+        cmd_type = COMM_TYPE_SINGLE;
+    }
+    else
+    {
+        send_cmd_data = &comm_ctrl->period_cmd;
+        cmd_type = COMM_TYPE_PERIOD;
+    }
+    if((cmd_type == COMM_TYPE_PERIOD) && (comm_ctrl->cur_cmd.cmd_type == cmd_type))
+    {
+        //定周期命令，不需要重置retry_count
+        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, false);
+    }
+    else 
+    {
+        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, true);
+        comm_ctrl->cur_cmd.cmd_type = cmd_type;
+    }
+    comm_ctrl->cur_cmd.timeout = 1000U;
+    comm_ctrl_timeout_timer_start(comm_ctrl, comm_ctrl->cur_cmd.timeout); /* Start timeout timer with 5s timeout */    
     return COMM_OK;
 }
 
@@ -572,14 +600,29 @@ comm_result_t comm_ctrl_send_period_command(comm_ctrl_t *comm_ctrl, comm_data_t 
     return ret;
 }
 
-comm_result_t comm_ctrl_send_init_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd)
+comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *cmd)
 {
     comm_result_t ret = COMM_ERROR;
     
     if ((comm_ctrl != NULL) && (cmd != NULL))
     {
-        /* Enqueue command to init command queue */
-        if (comm_cmd_queue_enqueue_safe(comm_ctrl, &comm_ctrl->init_cmd_queue, cmd))
+        /* Enqueue command to single command queue */
+        if (comm_cmd_queue_enqueue_safe(comm_ctrl, &comm_ctrl->recv_data_queue, cmd))
+        {
+            ret = COMM_OK;
+        }
+    }
+    return ret;
+}
+
+comm_result_t comm_ctrl_get_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *cmd)
+{
+    comm_result_t ret = COMM_ERROR;
+    
+    if ((comm_ctrl != NULL) && (cmd != NULL))
+    {
+        /* Dequeue command from receive data queue */
+        if (comm_cmd_queue_dequeue_safe(comm_ctrl, &comm_ctrl->recv_data_queue, cmd))
         {
             ret = COMM_OK;
         }
