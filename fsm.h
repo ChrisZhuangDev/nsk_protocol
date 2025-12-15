@@ -21,7 +21,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
+#include "cmsis_os2.h"
 /**
  * @typedef state_t
  * @brief Opaque integer type used to represent FSM states
@@ -86,6 +86,7 @@ typedef struct fsm {
     size_t table_sz;                    /**< number of entries in table */
     state_t state;                      /**< current state */
     void* ctx;                          /**< optional user context pointer */
+    osMessageQueueId_t event_queue;       /**< optional event queue */
     /* optional: const char *name; void *user_ctx; mutex_t *lock; */
 } fsm_t;
 
@@ -126,5 +127,72 @@ void fsm_init(fsm_t *fsm, const struct fsm_transition *table, size_t table_sz, s
  */
 uint8_t fsm_process_event(fsm_t *fsm, event_t event);
 
+/**
+ * @brief Get the current state of the FSM
+ *
+ * Retrieves the current state value from the FSM without modifying it.
+ * Useful for debugging, logging, or conditional logic based on FSM state.
+ *
+ * @param[in] fsm Pointer to the FSM instance. If NULL, returns 0.
+ * @return state_t The current state of the FSM, or 0 if fsm is NULL.
+ */
+event_t fsm_get_current_state(fsm_t *fsm);
+
+/**
+ * @brief Create an event queue for asynchronous FSM event handling
+ *
+ * Creates a CMSIS-RTOS2 message queue for storing FSM events. This enables
+ * asynchronous event posting and batch processing, useful for multi-threaded
+ * environments where events are generated in one context and processed in
+ * another.
+ *
+ * @param[in,out] fsm Pointer to the FSM instance. If NULL, no action is taken.
+ * @param[in] msg_count Maximum number of events the queue can hold.
+ *
+ * @note The created queue is not automatically cleaned up by the FSM engine.
+ * @note If creation fails, fsm->event_queue will be NULL.
+ *
+ * @see fsm_send_event(), fsm_poll()
+ */
+void fsm_create_event_queue(fsm_t *fsm, uint32_t msg_count);
+
+/**
+ * @brief Send an event to the FSM's event queue
+ *
+ * Enqueues an event for later processing. The event is not processed
+ * immediately but stored in the queue until fsm_proccess() is called.
+ * This decouples event generation from FSM processing.
+ *
+ * @param[in,out] fsm Pointer to the FSM instance. Must have an event queue
+ *                    created via fsm_create_event_queue().
+ * @param[in] event The event to enqueue.
+ *
+ * @note Uses timeout of 0 (no wait). If queue is full, event is dropped.
+ * @note Does nothing if fsm or fsm->event_queue is NULL.
+ *
+ * @see fsm_create_event_queue(), fsm_poll()
+ */
+void fsm_send_event(fsm_t *fsm, event_t event);
+
+/**
+ * @brief Poll and process all pending events in the FSM's event queue
+ *
+ * Retrieves and processes all events currently in the FSM's event queue
+ * in FIFO order. Each event is passed to fsm_process_event() which may
+ * trigger state transitions and execute actions.
+ *
+ * Typically called periodically in a main loop or task to handle events
+ * that were asynchronously enqueued via fsm_send_event().
+ *
+ * @param[in,out] fsm Pointer to the FSM instance. Must have an event queue
+ *                    created via fsm_create_event_queue().
+ *
+ * @note Non-blocking: processes all events present at call time and returns.
+ * @note Events added during processing will be handled in the next call.
+ * @note Does nothing if fsm or fsm->event_queue is NULL.
+ *
+ * @see fsm_send_event(), fsm_create_event_queue()
+ */
+void fsm_poll(fsm_t *fsm);
 
 #endif /* STATE_MACHINE_H */
