@@ -9,6 +9,10 @@
 #include "cmsis_os2.h"
 #include "comm_def.h"
 
+/* Internal command queue */
+#define COMM_SINGLE_CMD_QUEUE_SIZE  8U
+#define COMM_RECV_DATA_QUEUE_SIZE   8U
+
 enum{
     MESSAGE_ID_COMM_START = 0U,
     MESSAGE_ID_COMM_NOTIFY,
@@ -42,18 +46,29 @@ typedef struct{
     uint16_t retry_count;
 }comm_cmd_t;
 
-/* Internal command queue */
-#define COMM_SINGLE_CMD_QUEUE_SIZE  8U
-#define COMM_RECV_DATA_QUEUE_SIZE  4U
-
 typedef struct {
     comm_data_t *commands;   /* Pointer to command array */
     uint8_t head;
     uint8_t tail;
     uint8_t count;
     uint8_t capacity;       /* Maximum queue size */
+    osMutexId_t mutex;      /* Protects this command queue */
 } comm_cmd_queue_t;
 
+typedef struct {
+    comm_data_t buffers[COMM_RECV_DATA_QUEUE_SIZE];  /* 缓冲池 */
+    
+    uint8_t idle_queue[COMM_RECV_DATA_QUEUE_SIZE];
+    uint8_t idle_head, idle_tail, idle_count;
+    
+    uint8_t recv_queue[COMM_RECV_DATA_QUEUE_SIZE];
+    uint8_t recv_head, recv_tail, recv_count;
+    
+    uint8_t ready_queue[COMM_RECV_DATA_QUEUE_SIZE];
+    uint8_t ready_head, ready_tail, ready_count;
+    
+    osMutexId_t pool_mutex;
+} recv_buffer_pool_t;
 typedef struct {
     fsm_t fsm;
     comm_cmd_t cur_cmd;
@@ -61,9 +76,8 @@ typedef struct {
     comm_data_t period_cmd;
     comm_cmd_queue_t single_cmd_queue;  /* 单次命令队列 */
     comm_data_t single_cmd_buffer[COMM_SINGLE_CMD_QUEUE_SIZE]; /* 单次命令缓冲区 */
-    comm_cmd_queue_t recv_data_queue;  /* 接收数据队列 */
-    comm_data_t recv_data_buffer[COMM_RECV_DATA_QUEUE_SIZE];     /* 接收数据缓冲区 */
-    osMutexId_t queue_mutex;            /* 队列互斥锁 */
+    recv_buffer_pool_t recv_pool; /* 接收缓冲池 */
+    osMutexId_t mutex; 
     osTimerId_t preiod_timer;
     osTimerId_t timeout_timer;
 }comm_ctrl_t;
