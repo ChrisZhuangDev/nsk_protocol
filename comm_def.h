@@ -10,6 +10,7 @@ typedef enum {
     COMM_TIMEOUT = 2,         /**< Operation timeout */
     COMM_INCOMPLETE = 3,      /**< Data incomplete */
     COMM_RETRY_EXHAUSTED = 4, /**< Retry attempts exhausted */
+    COMM_EMPTY_QUEUE = 5,     /**< Queue is empty */
 }comm_result_t;
 
 #define COMM_PROTOCOL_MAX_DATA_LEN          64

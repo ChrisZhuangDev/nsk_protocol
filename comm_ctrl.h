@@ -25,7 +25,6 @@ enum{
 
 typedef enum{
     COMM_TYPE_NONE = 0U,
-    COMM_TYPE_INIT,
     COMM_TYPE_SINGLE,
     COMM_TYPE_PERIOD,
 }comm_type_t;
@@ -39,11 +38,13 @@ typedef struct
 
 typedef struct{
     comm_type_t cmd_type;
-    comm_data_t data;
+    comm_data_t send_data;
+    comm_data_t resp_data;
     uint8_t send_cmd_id;
     uint8_t resp_cmd_id;
     uint16_t timeout;
     uint16_t retry_count;
+    bool is_timeout;
 }comm_cmd_t;
 
 typedef struct {

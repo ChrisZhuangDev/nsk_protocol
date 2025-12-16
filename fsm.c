@@ -88,7 +88,6 @@ uint8_t fsm_process_event(fsm_t *fsm, event_t event)
             break;
         }
     }
-
     return result;
 }
 
@@ -194,18 +193,14 @@ void fsm_send_event(fsm_t *fsm, event_t event)
 void fsm_poll(fsm_t *fsm)
 {
     event_t event = 0u;
-    uint8_t event_cnt = 0;
 
     if (fsm == NULL || fsm->event_queue == NULL) 
     {
         return;
     }
-    event_cnt = osMessageQueueGetCount(fsm->event_queue);
-    for(uint8_t i = 0; i < event_cnt; i++)
+    
+    while(osMessageQueueGet(fsm->event_queue, &event, NULL, 0U) == osOK)
     {
-        if(osMessageQueueGet(fsm->event_queue, &event, NULL, 0U) == osOK)
-        {
-            fsm_process_event(fsm, event);
-        }
+        fsm_process_event(fsm, event);
     }
 }

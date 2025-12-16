@@ -43,8 +43,18 @@ static void comm_ctrl_timeout_timer_start(comm_ctrl_t *comm_ctrl, uint16_t timeo
 static void comm_ctrl_preiod_timer_start(comm_ctrl_t *comm_ctrl, uint16_t period_ms);
 static void comm_ctrl_timeout_timer_stop(comm_ctrl_t *comm_ctrl);
 /* thread-safe wrappers removed; callers use queue->mutex + comm_cmd_queue_* */
-static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_cmd_t* cmd ,bool is_reset_retry);
+static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_type_t type,comm_cmd_t* cmd ,bool is_reset_retry);
 static void comm_ctrl_preiod_timer_stop(comm_ctrl_t *comm_ctrl);
+
+/* Recv buffer pool function declarations */
+static comm_result_t comm_ctrl_recv_pool_init(recv_buffer_pool_t *pool);
+static comm_result_t comm_ctrl_recv_pool_alloc_idle(recv_buffer_pool_t *pool, uint8_t *out_idx);
+static comm_result_t comm_ctrl_recv_pool_free_idle(recv_buffer_pool_t *pool, uint8_t idx);
+static comm_result_t comm_ctrl_recv_pool_pop_recv(recv_buffer_pool_t *pool, uint8_t *out_idx);
+static comm_result_t comm_ctrl_recv_pool_push_recv(recv_buffer_pool_t *pool, uint8_t idx);
+static comm_result_t comm_ctrl_recv_pool_pop_ready(recv_buffer_pool_t *pool, uint8_t *out_idx);
+static comm_result_t comm_ctrl_recv_pool_push_ready(recv_buffer_pool_t *pool, uint8_t idx);
+static comm_data_t* comm_ctrl_recv_pool_get_buf(recv_buffer_pool_t *pool, uint8_t idx);
 static void comm_ctrl_fsm_actrion_send_cycle(void* handle);
 static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl);
 static void comm_ctrl_fsm_actrion_start(void* handle)
@@ -53,13 +63,12 @@ static void comm_ctrl_fsm_actrion_start(void* handle)
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     comm_ctrl->cur_cmd.cmd_type = COMM_TYPE_NONE;
     comm_ctrl_preiod_timer_start(comm_ctrl, 2000U); /* Start period timer with 1s period */
-    comm_ctrl_send_cmd(comm_ctrl);
     fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
 }
 
 static void comm_ctrl_fsm_actrion_send_cycle(void* handle)
 {
-    DEBUG("cycle arrived!!!!!\n");
+    DEBUG("comm ctrl fsm cycle arrived!!!!!\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     (void)comm_ctrl_send_cmd(comm_ctrl);
 
@@ -67,17 +76,41 @@ static void comm_ctrl_fsm_actrion_send_cycle(void* handle)
 
 static void comm_ctrl_fsm_actrion_recv_resp(void* handle)
 {
-    DEBUG("Reply received successfully!!!!! \n");
+    uint8_t buf_idx = 0xFFU;
+    DEBUG("comm ctrl fsm Reply received successfully!!!!! \n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     comm_ctrl_timeout_timer_stop(comm_ctrl); /* Stop timeout timer */
+    comm_ctrl->cur_cmd.is_timeout = false;
+
+    if(comm_ctrl_recv_pool_alloc_idle(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
+    {
+        DEBUG("no idle buffer in recv pool\n");
+        return;
+    }
+    comm_data_t* buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
+    if(buf == NULL)
+    {
+        DEBUG("get idle buffer from recv pool fail\n");
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+        return;
+    }
+    memcpy(buf, &comm_ctrl->cur_cmd.resp_data, sizeof(comm_data_t));
+    if(comm_ctrl_recv_pool_push_ready(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
+    {
+        DEBUG("push ready buffer to recv pool fail\n");
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+        return; 
+    }
+    
 }
 
 static void comm_ctrl_fsm_actrion_resp_timeout(void* handle)
 {
-    DEBUG("resp timeout\n");
+    DEBUG("comm ctrl fsm resp timeout\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     if((--comm_ctrl->cur_cmd.retry_count) > 0U)
     {
+        comm_ctrl->cur_cmd.is_timeout = true;
         DEBUG("retry send command, remaining retry count: %u\n", comm_ctrl->cur_cmd.retry_count);
     }
     else
@@ -135,6 +168,7 @@ static comm_result_t comm_ctrl_recv_pool_init(recv_buffer_pool_t *pool)
     pool->pool_mutex = osMutexNew(NULL);
     if (pool->pool_mutex == NULL)
     {
+        DEBUG("recv pool mutex create failed\n");
         return COMM_ERROR;
     }
 
@@ -152,7 +186,7 @@ static comm_result_t comm_ctrl_recv_pool_alloc_idle(recv_buffer_pool_t *pool, ui
     {
         return COMM_ERROR;
     }
-
+    
     status = osMutexAcquire(pool->pool_mutex, osWaitForever);
     if (status == osOK)
     {
@@ -312,25 +346,13 @@ static comm_result_t comm_ctrl_recv_pool_push_ready(recv_buffer_pool_t *pool, ui
 /* 根据索引(id)获取缓冲区指针 */
 static comm_data_t* comm_ctrl_recv_pool_get_buf(recv_buffer_pool_t *pool, uint8_t idx)
 {
-    comm_data_t *buf = NULL;
-    osStatus_t status;
-
-    if (pool == NULL)
+    /* No mutex needed: caller already owns the index exclusively */
+    if ((pool == NULL) || (idx >= (uint8_t)COMM_RECV_DATA_QUEUE_SIZE))
     {
         return NULL;
     }
 
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
-    if (status == osOK)
-    {
-        if (idx < (uint8_t)COMM_RECV_DATA_QUEUE_SIZE)
-        {
-            buf = &pool->buffers[idx];
-        }
-        (void)osMutexRelease(pool->pool_mutex);
-    }
-
-    return buf;
+    return &pool->buffers[idx];
 }
 
 
@@ -492,7 +514,7 @@ static bool comm_cmd_queue_dequeue(comm_cmd_queue_t *queue, comm_data_t *cmd)
 static void comm_ctrl_timeout_timer_callback(void* argument)
 {
     //send message
-    DEBUG("timeout\n");
+    DEBUG("time callback : timeout\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)argument;
     message_t msg;
     msg.msg_id = MESSAGE_ID_COMM_SEND_TIMEOUT;
@@ -538,7 +560,7 @@ static void comm_ctrl_timeout_timer_restart(comm_ctrl_t *comm_ctrl, uint16_t tim
 static void comm_ctrl_preiod_timer_callback(void* argument)
 {
     //send message
-    DEBUG("period timer\n");
+    DEBUG("time callback : period timer\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)argument;
     message_t msg;
     msg.msg_id = MESSAGE_ID_COMM_SEND_CYCLE;
@@ -608,18 +630,20 @@ static void comm_ctrl_get_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cm
     }
 }
 
-static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_cmd_t* cmd ,bool is_reset_retry)
+static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_type_t type,comm_cmd_t* cmd ,bool is_reset_retry)
 {
     if(data == NULL || cmd == NULL)
     {
         return COMM_ERROR;
     }
     cmd->send_cmd_id = data->comm_id;
-    memcpy(&cmd->data, data, data->comm_len);
+    memcpy(&cmd->send_data, data, data->comm_len);
     if(is_reset_retry)
     {
         cmd->retry_count = 4;
     }
+    cmd->is_timeout = false;
+    cmd->cmd_type = type;
     return COMM_OK;
 }
 
@@ -695,6 +719,7 @@ static void comm_ctrl_notify(void* ctx, message_t* msg)
     {
         return;
     }
+    DEBUG("comm ctrl msg: notify\n");
 }
 
 static void comm_ctrl_update_period_cmd(void* ctx, message_t* msg)
@@ -704,6 +729,7 @@ static void comm_ctrl_update_period_cmd(void* ctx, message_t* msg)
     {
         return;
     }
+    DEBUG("comm ctrl msg: update period cmd\n");
 }
 static void comm_ctrl_send_timeout(void* ctx, message_t* msg)
 {
@@ -712,7 +738,7 @@ static void comm_ctrl_send_timeout(void* ctx, message_t* msg)
     {
         return;
     }
-
+DEBUG("comm ctrl msg: timeout\n");
     fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_TIMEOUT);
 }
 static void comm_ctrl_send_cycle(void* ctx, message_t* msg)
@@ -722,6 +748,7 @@ static void comm_ctrl_send_cycle(void* ctx, message_t* msg)
     {
         return;
     }
+    DEBUG("comm ctrl msg: send cycle\n");
     fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
 }
 static void comm_ctrl_recv_data(void* ctx, message_t* msg)
@@ -731,24 +758,38 @@ static void comm_ctrl_recv_data(void* ctx, message_t* msg)
     {
         return;
     }
-    
-    uint8_t buf_idx = msg->msg_len; //buf idx
-    comm_data_t* data = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
-    if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
+    DEBUG("comm ctrl msg: recv data\n");
+    uint8_t buf_idx = 0xFFU;
+    //从recv池的recv取数据
+    if(comm_ctrl_recv_pool_pop_recv(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
     {
-        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-
+        DEBUG("no recv data in pool\n");
+        return;
     }
+    comm_data_t* data = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
+    if(data == NULL)
+    {
+        DEBUG("get recv data buffer fail\n");
+        return;
+    }
+
+    if(comm_ctrl->cur_cmd.is_timeout == true)
+    {
+        //timeout already, discard
+        DEBUG("recv data but command already timeout, discard\n");
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+    }
+    // else if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
+    // {
+    //     comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+
+    // }
     else
     {
-        if(comm_ctrl_recv_pool_push_recv(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
-        {
-            comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-        }
-        else
-        {
-            fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
-        }
+        DEBUG("recv data matched current command, process it\n");
+        memcpy(&comm_ctrl->cur_cmd.resp_data, data, sizeof(comm_data_t));
+        fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
     }
 }
 
@@ -780,30 +821,45 @@ comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
     return COMM_OK;
 }
 
+comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data);
 static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
 {
     comm_data_t cmd_data;
     comm_data_t* send_cmd_data = NULL;
     comm_type_t cmd_type = COMM_TYPE_NONE;
-    if (comm_cmd_queue_dequeue(&comm_ctrl->single_cmd_queue, &cmd_data))
+    //单次命令重发
+    if(comm_ctrl->cur_cmd.is_timeout == true && comm_ctrl->cur_cmd.cmd_type == COMM_TYPE_SINGLE)
     {
+        DEBUG("resend command id: 0x%02X\n", comm_ctrl->cur_cmd.send_cmd_id);
+        comm_ctrl->cur_cmd.is_timeout = false;
+        if(comm_ctrl->cur_cmd.retry_count == 2U)
+        {
+            //fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
+            comm_ctrl_save_recv_data(comm_ctrl, &comm_ctrl->cur_cmd.resp_data);
+        }
+        //直接发送
+    }
+    else if (comm_cmd_queue_dequeue(&comm_ctrl->single_cmd_queue, &cmd_data))//有单次命令
+    {
+        DEBUG("send single command id: 0x%02X\n", cmd_data.comm_id);
         send_cmd_data = &cmd_data;
         cmd_type = COMM_TYPE_SINGLE;
+        //装填在发送
+        comm_ctrl_load_data_to_cmd(send_cmd_data, COMM_TYPE_SINGLE, &comm_ctrl->cur_cmd, true);
     }
-    else
+    else//发送周期命令
     {
+        DEBUG("send period command id: 0x%02X\n", comm_ctrl->period_cmd.comm_id);
         send_cmd_data = &comm_ctrl->period_cmd;
         cmd_type = COMM_TYPE_PERIOD;
-    }
-    if((cmd_type == COMM_TYPE_PERIOD) && (comm_ctrl->cur_cmd.cmd_type == cmd_type))
-    {
-        //定周期命令，不需要重置retry_count
-        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, false);
-    }
-    else 
-    {
-        comm_ctrl_load_data_to_cmd(send_cmd_data, &comm_ctrl->cur_cmd, true);
-        comm_ctrl->cur_cmd.cmd_type = cmd_type;
+        if(comm_ctrl->cur_cmd.cmd_type == cmd_type)//上一次是定周期命令，就不需要要重置retry_count
+        {
+            comm_ctrl_load_data_to_cmd(send_cmd_data, COMM_TYPE_PERIOD, &comm_ctrl->cur_cmd, false);
+        }
+        else//上一次发送的时候单次命令
+        {
+            comm_ctrl_load_data_to_cmd(send_cmd_data, COMM_TYPE_PERIOD, &comm_ctrl->cur_cmd, true);
+        }
     }
     comm_ctrl->cur_cmd.timeout = 1000U;
     comm_ctrl_timeout_timer_start(comm_ctrl, comm_ctrl->cur_cmd.timeout); /* Start timeout timer with 5s timeout */    
@@ -819,6 +875,7 @@ comm_result_t comm_ctrl_send_single_command(comm_ctrl_t *comm_ctrl, comm_data_t 
         /* Enqueue command to single command queue (function is thread-safe) */
         if (comm_cmd_queue_enqueue(&comm_ctrl->single_cmd_queue, cmd))
         {
+            DEBUG("enqueue single command id: 0x%02X\n", cmd->comm_id);
             ret = COMM_OK;
         }
     }
@@ -840,35 +897,78 @@ comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data
     comm_result_t ret = COMM_ERROR;
     uint8_t buf_idx = 0xFFU;
     comm_data_t* buf = NULL;
-    if ((comm_ctrl != NULL) && (data != NULL))
+    if ((comm_ctrl == NULL) || (data == NULL))
     {
-        /* Allocate buffer from pool */
-        if (comm_ctrl_recv_pool_alloc_idle(&comm_ctrl->recv_pool, &buf_idx) == COMM_OK)
-        {
-            buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
-            if (buf != NULL)
-            {
-                /* Copy data to buffer */
-                memcpy(buf, data, sizeof(comm_data_t));
-                message_t msg;
-                msg.msg_id = MESSAGE_ID_COMM_RECV_DATA;
-                msg.msg_data = NULL;
-                msg.msg_len = buf_idx;
-                if(comm_ctrl_send_msg(comm_ctrl, &msg) == COMM_OK)
-                {
-                    ret = COMM_OK;
-                }
-                else
-                {
-                    comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-                }
-            }
-            else
-            {
-                comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-            }
-        }
+        return ret;
     }
+    /* Allocate buffer from pool */
+    if (comm_ctrl_recv_pool_alloc_idle(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
+    {
+        DEBUG("allocated fail\n");
+        return ret;
+    }
+    buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
+    if (buf == NULL)
+    {
+        DEBUG("get buffer faill, %d\n",buf_idx);
+        return ret;
+    }
+    /* Copy data to buffer */
+    memcpy(buf, data, sizeof(comm_data_t));
+        /* Push buffer index to recv queue */
+    if (comm_ctrl_recv_pool_push_recv(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
+    {
+        DEBUG("push recv faill\n");
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+        return ret;
+    }
+    message_t msg;
+    msg.msg_id = MESSAGE_ID_COMM_RECV_DATA;
+    msg.msg_data = NULL;
+    msg.msg_len = 0;
+    if(comm_ctrl_send_msg(comm_ctrl, &msg) == COMM_OK)
+    {
+        DEBUG("send recv data msg success\n");
+        ret = COMM_OK;
+    }
+    else
+    {
+        DEBUG("send recv data msg faill\n");
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+    }
+    return ret;
+}
 
+
+comm_result_t comm_ctrl_get_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data)
+{
+    comm_result_t ret = COMM_ERROR;
+    uint8_t buf_idx = 0xFFU;
+    comm_data_t* buf = NULL;
+    if ((comm_ctrl == NULL) || (data == NULL))
+    {
+        return ret;
+    }
+    /* Pop buffer index from ready queue */
+    if (comm_ctrl_recv_pool_pop_ready(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
+    {
+        DEBUG("no ready data in pool\n");
+        return COMM_EMPTY_QUEUE;
+    }
+    buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
+    if (buf == NULL)
+    {
+        DEBUG("get ready buffer fail, %d\n",buf_idx);
+        return ret;
+    }
+    /* Copy data from buffer */
+    memcpy(data, buf, sizeof(comm_data_t));
+    /* Free buffer back to idle queue */
+    if (comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
+    {
+        DEBUG("free idle buffer fail\n");
+        return ret;
+    }
+    ret = COMM_OK;
     return ret;
 }
