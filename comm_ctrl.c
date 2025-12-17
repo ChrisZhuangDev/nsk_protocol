@@ -834,8 +834,8 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
         comm_ctrl->cur_cmd.is_timeout = false;
         if(comm_ctrl->cur_cmd.retry_count == 2U)
         {
-            //fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
-            comm_ctrl_save_recv_data(comm_ctrl, &comm_ctrl->cur_cmd.resp_data);
+            // fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
+            // comm_ctrl_save_recv_data(comm_ctrl, &comm_ctrl->cur_cmd.resp_data);
         }
         //直接发送
     }
