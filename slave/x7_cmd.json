@@ -1,0 +1,116 @@
+{
+  "commands": [
+    {
+      "name": "USER_OPERATION",
+      "cmd_id": "F0",
+      "resp_id": "F1",
+      "resp_data_len": 13,
+      "resp_hex": "00 00 00 00 00 00 00 00 00 00 00 00 00"
+    },
+    {
+      "name": "ENTER_SETTING",
+      "cmd_id": "20",
+      "resp_id": "21",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "EXIT_SETTING",
+      "cmd_id": "22",
+      "resp_id": "23",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "BUZZER_VOLUME",
+      "cmd_id": "0E",
+      "resp_id": "0F",
+      "resp_data_len": 2,
+      "resp_hex": "00 00"
+    },
+    {
+      "name": "CLEAN_MODE_START",
+      "cmd_id": "50",
+      "resp_id": "51",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "CLEAN_MODE_STOP",
+      "cmd_id": "52",
+      "resp_id": "53",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "CLM_START",
+      "cmd_id": "54",
+      "resp_id": "55",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "CLM_STOP",
+      "cmd_id": "56",
+      "resp_id": "57",
+      "resp_data_len": 1,
+      "resp_hex": "00"
+    },
+    {
+      "name": "MACHINE_ID",
+      "cmd_id": "80",
+      "resp_id": "81",
+      "resp_data_len": 9,
+      "resp_hex": "00 00 00 00 00 00 00 00 00"
+    },
+    {
+      "name": "SERIAL_NUMBER_GET",
+      "cmd_id": "82",
+      "resp_id": "83",
+      "resp_data_len": 9,
+      "resp_hex": "00 00 00 00 00 00 00 00 00"
+    },
+    {
+      "name": "SOFTWARE_VERSION_GET",
+      "cmd_id": "84",
+      "resp_id": "85",
+      "resp_data_len": 3,
+      "resp_hex": "00 00 00"
+    },
+    {
+      "name": "ERROR_INFO_GET",
+      "cmd_id": "86",
+      "resp_id": "87",
+      "resp_data_len": 3,
+      "resp_hex": "00 00 00"
+    },
+    {
+      "name": "MODE_INFO_GET",
+      "cmd_id": "88",
+      "resp_id": "89",
+      "resp_data_len": 9,
+      "resp_hex": "00 00 00 00 00 00 00 00 00"
+    },
+    {
+      "name": "LAST_MEMORY_GET",
+      "cmd_id": "8A",
+      "resp_id": "8B",
+      "resp_data_len": 2,
+      "resp_hex": "00 00"
+    },
+    {
+      "name": "SETTING_INFO_GET",
+      "cmd_id": "8C",
+      "resp_id": "8D",
+      "resp_data_len": 2,
+      "resp_hex": "00 00"
+    },
+    {
+      "name": "CMD_DATA_GET",
+      "cmd_id": "90",
+      "resp_id": "91",
+      "resp_data_len": 5,
+      "resp_hex": "00 00 00 00 00"
+    }
+  ]
+}
