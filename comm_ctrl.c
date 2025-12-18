@@ -473,7 +473,7 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
     return ret;
 }
 
-comm_result_t comm_ctrl_add_send_func(comm_ctrl_t *comm_ctrl, comm_send_func_t send_func)
+comm_result_t comm_ctrl_set_send_func(comm_ctrl_t *comm_ctrl, comm_send_func_t send_func)
 {
     comm_result_t ret = COMM_ERROR;
     if (comm_ctrl != NULL && send_func != NULL)
@@ -621,7 +621,7 @@ comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
     return COMM_OK;
 }
 
-comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, uint8_t *data, uint16_t len);
+
 static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
 {
     comm_data_t cmd_data;
@@ -634,13 +634,8 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
     {
         DEBUG("resend command id: 0x%02X\n", comm_ctrl->cur_cmd.send_cmd_id);
         comm_ctrl->cur_cmd.is_timeout = false;
-        if(comm_ctrl->send_func != NULL)
-        {
-            send_buf[0] = comm_ctrl->cur_cmd.send_cmd_id;
-            memcpy(&send_buf[1], &comm_ctrl->cur_cmd.send_data, comm_ctrl->cur_cmd.send_data.comm_len);
-            send_len = comm_ctrl->cur_cmd.send_data.comm_len + 1U;
-            comm_ctrl->send_func(send_buf, send_len);
-        }
+        send_cmd_data = &comm_ctrl->cur_cmd.send_data;
+
     }
     else if ( osMessageQueueGet(comm_ctrl->single_cmd_queue, &cmd_data, NULL, 0U) == osOK)//有单次命令
     {
@@ -666,6 +661,13 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
     }
     comm_ctrl->cur_cmd.timeout = 1000U;
     comm_ctrl_timeout_timer_start(comm_ctrl, comm_ctrl->cur_cmd.timeout); /* Start timeout timer with 5s timeout */    
+    if(comm_ctrl->send_func != NULL)
+    {
+        send_buf[0] = comm_ctrl->cur_cmd.send_cmd_id;
+        memcpy(&send_buf[1], &comm_ctrl->cur_cmd.send_data, comm_ctrl->cur_cmd.send_data.comm_len);
+        send_len = comm_ctrl->cur_cmd.send_data.comm_len + 1U;
+        comm_ctrl->send_func(send_buf, send_len);
+    }
     return COMM_OK;
 }
 
