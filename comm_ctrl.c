@@ -45,7 +45,7 @@ static void comm_ctrl_timeout_timer_stop(comm_ctrl_t *comm_ctrl);
 /* thread-safe wrappers removed; callers use queue->mutex + comm_cmd_queue_* */
 static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_type_t type,comm_cmd_t* cmd ,bool is_reset_retry);
 static void comm_ctrl_preiod_timer_stop(comm_ctrl_t *comm_ctrl);
-
+static comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg);
 /* Recv buffer pool function declarations */
 static comm_result_t comm_ctrl_recv_pool_init(recv_buffer_pool_t *pool);
 static comm_result_t comm_ctrl_recv_pool_alloc_idle(recv_buffer_pool_t *pool, uint8_t *out_idx);
@@ -608,7 +608,7 @@ comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl,uint32_t timeout_ms)
     return COMM_OK;
 }
 
-comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
+static comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
 {
     if(comm_ctrl == NULL || comm_ctrl->msg_queue == NULL || msg == NULL)
     {
