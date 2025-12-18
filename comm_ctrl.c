@@ -473,6 +473,17 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
     return ret;
 }
 
+comm_result_t comm_ctrl_add_send_func(comm_ctrl_t *comm_ctrl, comm_send_func_t send_func)
+{
+    comm_result_t ret = COMM_ERROR;
+    if (comm_ctrl != NULL && send_func != NULL)
+    {
+        comm_ctrl->send_func = send_func;
+        ret = COMM_OK;
+    }
+    return ret;
+}
+
 comm_result_t comm_ctrl_start(comm_ctrl_t *comm_ctrl)
 {
     comm_result_t ret = COMM_ERROR;
@@ -616,17 +627,20 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
     comm_data_t cmd_data;
     comm_data_t* send_cmd_data = NULL;
     comm_type_t cmd_type = COMM_TYPE_NONE;
+    uint8_t send_buf[COMM_DATA_MAX_LEN + 1U] = {0};
+    uint16_t send_len = 0U;
     //单次命令重发
     if(comm_ctrl->cur_cmd.is_timeout == true && comm_ctrl->cur_cmd.cmd_type == COMM_TYPE_SINGLE)
     {
         DEBUG("resend command id: 0x%02X\n", comm_ctrl->cur_cmd.send_cmd_id);
         comm_ctrl->cur_cmd.is_timeout = false;
-        if(comm_ctrl->cur_cmd.retry_count == 2U)
+        if(comm_ctrl->send_func != NULL)
         {
-            // fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
-            // comm_ctrl_save_recv_data(comm_ctrl, &comm_ctrl->cur_cmd.resp_data);
+            send_buf[0] = comm_ctrl->cur_cmd.send_cmd_id;
+            memcpy(&send_buf[1], &comm_ctrl->cur_cmd.send_data, comm_ctrl->cur_cmd.send_data.comm_len);
+            send_len = comm_ctrl->cur_cmd.send_data.comm_len + 1U;
+            comm_ctrl->send_func(send_buf, send_len);
         }
-        //直接发送
     }
     else if ( osMessageQueueGet(comm_ctrl->single_cmd_queue, &cmd_data, NULL, 0U) == osOK)//有单次命令
     {

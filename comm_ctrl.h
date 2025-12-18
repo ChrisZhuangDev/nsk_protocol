@@ -78,7 +78,7 @@ typedef struct {
 comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl);
 comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl, uint32_t timeout_ms);
 comm_result_t comm_ctrl_start(comm_ctrl_t *comm_ctrl);
-
+comm_result_t comm_ctrl_add_send_func(comm_ctrl_t *comm_ctrl, comm_send_func_t send_func);
 comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg);
 comm_result_t comm_ctrl_send_single_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
 comm_result_t comm_ctrl_send_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
