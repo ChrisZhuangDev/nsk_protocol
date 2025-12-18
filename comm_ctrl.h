@@ -10,9 +10,9 @@
 #include "comm_def.h"
 
 /* Internal command queue */
-#define COMM_SINGLE_CMD_QUEUE_SIZE  8U
-#define COMM_RECV_DATA_QUEUE_SIZE   8U
-
+#define COMM_SINGLE_CMD_QUEUE_SIZE  6U
+#define COMM_RECV_DATA_QUEUE_SIZE   4U
+#define COMM_SEND_DATA_QUEUE_SIZE   2U
 enum{
     MESSAGE_ID_COMM_START = 0U,
     MESSAGE_ID_COMM_NOTIFY,
@@ -28,6 +28,8 @@ typedef enum{
     COMM_TYPE_SINGLE,
     COMM_TYPE_PERIOD,
 }comm_type_t;
+
+typedef void(*comm_send_func_t)(uint8_t* data, uint16_t len);
 
 typedef struct 
 {
@@ -48,48 +50,39 @@ typedef struct{
 }comm_cmd_t;
 
 typedef struct {
-    comm_data_t *commands;   /* Pointer to command array */
-    uint8_t head;
-    uint8_t tail;
-    uint8_t count;
-    uint8_t capacity;       /* Maximum queue size */
-    osMutexId_t mutex;      /* Protects this command queue */
-} comm_cmd_queue_t;
+    comm_data_t buffers[COMM_RECV_DATA_QUEUE_SIZE];  /* 缓冲池 */
+    osMessageQueueId_t idle_queue;
+    osMessageQueueId_t recv_queue;
+    osMessageQueueId_t ready_queue;
+} recv_buffer_pool_t;
 
 typedef struct {
-    comm_data_t buffers[COMM_RECV_DATA_QUEUE_SIZE];  /* 缓冲池 */
-    
-    uint8_t idle_queue[COMM_RECV_DATA_QUEUE_SIZE];
-    uint8_t idle_head, idle_tail, idle_count;
-    
-    uint8_t recv_queue[COMM_RECV_DATA_QUEUE_SIZE];
-    uint8_t recv_head, recv_tail, recv_count;
-    
-    uint8_t ready_queue[COMM_RECV_DATA_QUEUE_SIZE];
-    uint8_t ready_head, ready_tail, ready_count;
-    
-    osMutexId_t pool_mutex;
-} recv_buffer_pool_t;
+    comm_data_t buffers[COMM_SINGLE_CMD_QUEUE_SIZE];  /* 缓冲池 */
+    osMessageQueueId_t idle_queue;
+    osMessageQueueId_t work_queue;
+}single_buffer_pool_t;
+
 typedef struct {
     fsm_t fsm;
     comm_cmd_t cur_cmd;
     message_queue_t msg_queue;
     comm_data_t period_cmd;
-    comm_cmd_queue_t single_cmd_queue;  /* 单次命令队列 */
-    comm_data_t single_cmd_buffer[COMM_SINGLE_CMD_QUEUE_SIZE]; /* 单次命令缓冲区 */
+    osMessageQueueId_t single_cmd_queue;
     recv_buffer_pool_t recv_pool; /* 接收缓冲池 */
     osMutexId_t mutex; 
     osTimerId_t preiod_timer;
     osTimerId_t timeout_timer;
+    comm_send_func_t send_func;
 }comm_ctrl_t;
 
 comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl);
-comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl);
+comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl, uint32_t timeout_ms);
 comm_result_t comm_ctrl_start(comm_ctrl_t *comm_ctrl);
 
 comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg);
 comm_result_t comm_ctrl_send_single_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
 comm_result_t comm_ctrl_send_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
 comm_result_t comm_ctrl_send_init_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
+
 
 #endif // COMM_CTRL_H

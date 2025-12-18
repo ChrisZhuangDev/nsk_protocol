@@ -81,27 +81,6 @@ static void comm_ctrl_fsm_actrion_recv_resp(void* handle)
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     comm_ctrl_timeout_timer_stop(comm_ctrl); /* Stop timeout timer */
     comm_ctrl->cur_cmd.is_timeout = false;
-
-    if(comm_ctrl_recv_pool_alloc_idle(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
-    {
-        DEBUG("no idle buffer in recv pool\n");
-        return;
-    }
-    comm_data_t* buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);
-    if(buf == NULL)
-    {
-        DEBUG("get idle buffer from recv pool fail\n");
-        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-        return;
-    }
-    memcpy(buf, &comm_ctrl->cur_cmd.resp_data, sizeof(comm_data_t));
-    if(comm_ctrl_recv_pool_push_ready(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
-    {
-        DEBUG("push ready buffer to recv pool fail\n");
-        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
-        return; 
-    }
-    
 }
 
 static void comm_ctrl_fsm_actrion_resp_timeout(void* handle)
@@ -147,31 +126,44 @@ static comm_result_t comm_ctrl_recv_pool_init(recv_buffer_pool_t *pool)
     {
         return COMM_ERROR;
     }
-
-    pool->idle_head = (uint8_t)0U;
-    pool->idle_tail = (uint8_t)0U;
-    pool->idle_count = (uint8_t)COMM_RECV_DATA_QUEUE_SIZE;
-
-    pool->recv_head = (uint8_t)0U;
-    pool->recv_tail = (uint8_t)0U;
-    pool->recv_count = (uint8_t)0U;
-
-    pool->ready_head = (uint8_t)0U;
-    pool->ready_tail = (uint8_t)0U;
-    pool->ready_count = (uint8_t)0U;
-
-    for (uint8_t i = 0U; i < COMM_RECV_DATA_QUEUE_SIZE; i++)
+    memset(pool, 0, sizeof(recv_buffer_pool_t));
+    pool->idle_queue = osMessageQueueNew(COMM_RECV_DATA_QUEUE_SIZE, sizeof(uint8_t), NULL);
+    if(pool->idle_queue == NULL)
     {
-        pool->idle_queue[i] = i;
-    }
-
-    pool->pool_mutex = osMutexNew(NULL);
-    if (pool->pool_mutex == NULL)
-    {
-        DEBUG("recv pool mutex create failed\n");
         return COMM_ERROR;
     }
+    pool->recv_queue = osMessageQueueNew(COMM_RECV_DATA_QUEUE_SIZE, sizeof(uint8_t), NULL);
+    if(pool->recv_queue == NULL)
+    {
+        osMessageQueueDelete(pool->idle_queue);
+        return COMM_ERROR;
+    }
+    pool->ready_queue = osMessageQueueNew(COMM_RECV_DATA_QUEUE_SIZE, sizeof(uint8_t), NULL);
+    if(pool->ready_queue == NULL)
+    {
+        osMessageQueueDelete(pool->idle_queue);
+        osMessageQueueDelete(pool->recv_queue);
+        return COMM_ERROR;
+    }
+    for(uint8_t i = 0U; i < COMM_RECV_DATA_QUEUE_SIZE; i++)
+    {
+        osMessageQueuePut(pool->idle_queue, &i, 0U, 0U);
+    }
+    return COMM_OK;
+}
 
+static comm_result_t comm_ctrl_recv_pool_deinit(recv_buffer_pool_t *pool)
+{
+    if (pool == NULL)
+    {
+        return COMM_ERROR;
+    }
+    osMessageQueueDelete(pool->idle_queue);
+    osMessageQueueDelete(pool->recv_queue);
+    osMessageQueueDelete(pool->ready_queue);
+    pool->idle_queue = NULL;
+    pool->recv_queue = NULL;
+    pool->ready_queue = NULL;
     return COMM_OK;
 }
 
@@ -186,21 +178,12 @@ static comm_result_t comm_ctrl_recv_pool_alloc_idle(recv_buffer_pool_t *pool, ui
     {
         return COMM_ERROR;
     }
-    
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueueGet(pool->idle_queue, &idx, NULL, 0U);
     if (status == osOK)
     {
-        if (pool->idle_count > (uint8_t)0U)
-        {
-            idx = pool->idle_queue[pool->idle_head];
-            pool->idle_head = (uint8_t)((pool->idle_head + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->idle_count = (uint8_t)(pool->idle_count - 1U);
-            *out_idx = idx;
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        *out_idx = idx;
+        result = COMM_OK;
     }
-
     return result;
 }
 
@@ -210,22 +193,15 @@ static comm_result_t comm_ctrl_recv_pool_free_idle(recv_buffer_pool_t *pool, uin
     osStatus_t status;
     comm_result_t result = COMM_ERROR;
 
-    if (pool == NULL)
+    if (pool == NULL || idx >= COMM_RECV_DATA_QUEUE_SIZE)
     {
         return COMM_ERROR;
     }
 
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueuePut(pool->idle_queue, &idx, 0U, 0U);
     if (status == osOK)
     {
-        if (pool->idle_count < (uint8_t)COMM_RECV_DATA_QUEUE_SIZE)
-        {
-            pool->idle_queue[pool->idle_tail] = idx;
-            pool->idle_tail = (uint8_t)((pool->idle_tail + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->idle_count = (uint8_t)(pool->idle_count + 1U);
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        result = COMM_OK;
     }
 
     return result;
@@ -242,21 +218,12 @@ static comm_result_t comm_ctrl_recv_pool_pop_recv(recv_buffer_pool_t *pool, uint
     {
         return COMM_ERROR;
     }
-
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueueGet(pool->recv_queue, &idx, NULL, 0U);
     if (status == osOK)
     {
-        if (pool->recv_count > (uint8_t)0U)
-        {
-            idx = pool->recv_queue[pool->recv_head];
-            pool->recv_head = (uint8_t)((pool->recv_head + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->recv_count = (uint8_t)(pool->recv_count - 1U);
-            *out_idx = idx;
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        *out_idx = idx;
+        result = COMM_OK;
     }
-
     return result;
 }
 
@@ -266,22 +233,14 @@ static comm_result_t comm_ctrl_recv_pool_push_recv(recv_buffer_pool_t *pool, uin
     osStatus_t status;
     comm_result_t result = COMM_ERROR;
 
-    if (pool == NULL)
+    if (pool == NULL || idx >= COMM_RECV_DATA_QUEUE_SIZE)
     {
         return COMM_ERROR;
     }
-
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueuePut(pool->recv_queue, &idx, 0U, 0U);
     if (status == osOK)
     {
-        if (pool->recv_count < (uint8_t)COMM_RECV_DATA_QUEUE_SIZE)
-        {
-            pool->recv_queue[pool->recv_tail] = idx;
-            pool->recv_tail = (uint8_t)((pool->recv_tail + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->recv_count = (uint8_t)(pool->recv_count + 1U);
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        result = COMM_OK;
     }
 
     return result;
@@ -298,21 +257,12 @@ static comm_result_t comm_ctrl_recv_pool_pop_ready(recv_buffer_pool_t *pool, uin
     {
         return COMM_ERROR;
     }
-
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueueGet(pool->ready_queue, &idx, NULL, 0U);
     if (status == osOK)
     {
-        if (pool->ready_count > (uint8_t)0U)
-        {
-            idx = pool->ready_queue[pool->ready_head];
-            pool->ready_head = (uint8_t)((pool->ready_head + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->ready_count = (uint8_t)(pool->ready_count - 1U);
-            *out_idx = idx;
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        *out_idx = idx;
+        result = COMM_OK;
     }
-
     return result;
 }
 
@@ -322,22 +272,14 @@ static comm_result_t comm_ctrl_recv_pool_push_ready(recv_buffer_pool_t *pool, ui
     osStatus_t status;
     comm_result_t result = COMM_ERROR;
 
-    if (pool == NULL)
+    if (pool == NULL || idx >= COMM_RECV_DATA_QUEUE_SIZE)
     {
         return COMM_ERROR;
     }
-
-    status = osMutexAcquire(pool->pool_mutex, osWaitForever);
+    status = osMessageQueuePut(pool->ready_queue, &idx, 0U, 0U);
     if (status == osOK)
     {
-        if (pool->ready_count < (uint8_t)COMM_RECV_DATA_QUEUE_SIZE)
-        {
-            pool->ready_queue[pool->ready_tail] = idx;
-            pool->ready_tail = (uint8_t)((pool->ready_tail + 1U) % COMM_RECV_DATA_QUEUE_SIZE);
-            pool->ready_count = (uint8_t)(pool->ready_count + 1U);
-            result = COMM_OK;
-        }
-        (void)osMutexRelease(pool->pool_mutex);
+        result = COMM_OK;
     }
 
     return result;
@@ -347,7 +289,7 @@ static comm_result_t comm_ctrl_recv_pool_push_ready(recv_buffer_pool_t *pool, ui
 static comm_data_t* comm_ctrl_recv_pool_get_buf(recv_buffer_pool_t *pool, uint8_t idx)
 {
     /* No mutex needed: caller already owns the index exclusively */
-    if ((pool == NULL) || (idx >= (uint8_t)COMM_RECV_DATA_QUEUE_SIZE))
+    if ((pool == NULL) || (idx >= COMM_RECV_DATA_QUEUE_SIZE))
     {
         return NULL;
     }
@@ -355,159 +297,8 @@ static comm_data_t* comm_ctrl_recv_pool_get_buf(recv_buffer_pool_t *pool, uint8_
     return &pool->buffers[idx];
 }
 
-
 /************************************************************************************/
 
-/************************************************************************************/
-static comm_result_t comm_cmd_queue_init(comm_cmd_queue_t *queue, comm_data_t *buffer, uint8_t capacity)
-{
-    if ((queue == NULL) || (buffer == NULL) || (capacity == 0U))
-    {
-        return COMM_ERROR;
-    }
-
-    queue->commands = buffer;
-    queue->capacity = capacity;
-    queue->head = 0U;
-    queue->tail = 0U;
-    queue->count = 0U;
-    queue->mutex = osMutexNew(NULL);
-
-    if (queue->mutex == NULL)
-    {
-        return COMM_ERROR;
-    }
-
-    return COMM_OK;
-}
-
-/**
- * @brief Check if queue is empty
- */
-static bool comm_cmd_queue_is_empty(const comm_cmd_queue_t *queue)
-{
-    bool empty = false;
-    
-    if (queue != NULL)
-    {
-        empty = (queue->count == 0U);
-    }
-    
-    return empty;
-}
-
-/**
- * @brief Check if queue is full
- * @note Returns true for NULL queue to prevent enqueue operation
- */
-static bool comm_cmd_queue_is_full(const comm_cmd_queue_t *queue)
-{
-    bool full = true;
-    
-    if (queue != NULL)
-    {
-        full = (queue->count >= queue->capacity);
-    }
-    
-    return full;
-}
-
-/**
- * @brief Enqueue a command to specific queue (not thread-safe)
- * @note Caller must handle synchronization
- */
-static bool comm_cmd_queue_enqueue(comm_cmd_queue_t *queue, const comm_data_t *cmd)
-{
-    bool result = false;
-    uint8_t next_tail;
-    osStatus_t status = osError;
-    bool locked = false;
-
-    if ((queue == NULL) || (cmd == NULL))
-    {
-        return false;
-    }
-
-    /* Acquire queue mutex if available */
-    if (queue->mutex != NULL)
-    {
-        status = osMutexAcquire(queue->mutex, osWaitForever);
-        if (status == osOK)
-        {
-            locked = true;
-        }
-    }
-
-    /* Proceed without lock if mutex not present or failed to acquire */
-    if (!comm_cmd_queue_is_full(queue))
-    {
-        (void)memcpy(&queue->commands[queue->tail], cmd, sizeof(comm_data_t));
-
-        next_tail = (uint8_t)(queue->tail + 1U);
-        if (next_tail >= queue->capacity)
-        {
-            next_tail = 0U;
-        }
-        queue->tail = next_tail;
-        queue->count = (uint8_t)(queue->count + 1U);
-        result = true;
-    }
-
-    if (locked)
-    {
-        (void)osMutexRelease(queue->mutex);
-    }
-
-    return result;
-}
-
-/**
- * @brief Dequeue a command from specific queue (not thread-safe)
- * @note Caller must handle synchronization
- */
-static bool comm_cmd_queue_dequeue(comm_cmd_queue_t *queue, comm_data_t *cmd)
-{
-    bool result = false;
-    uint8_t next_head;
-    osStatus_t status = osError;
-    bool locked = false;
-
-    if ((queue == NULL) || (cmd == NULL))
-    {
-        return false;
-    }
-
-    /* Acquire queue mutex if available */
-    if (queue->mutex != NULL)
-    {
-        status = osMutexAcquire(queue->mutex, osWaitForever);
-        if (status == osOK)
-        {
-            locked = true;
-        }
-    }
-
-    if (!comm_cmd_queue_is_empty(queue))
-    {
-        (void)memcpy(cmd, &queue->commands[queue->head], sizeof(comm_data_t));
-
-        next_head = (uint8_t)(queue->head + 1U);
-        if (next_head >= queue->capacity)
-        {
-            next_head = 0U;
-        }
-        queue->head = next_head;
-        queue->count = (uint8_t)(queue->count - 1U);
-        result = true;
-    }
-
-    if (locked)
-    {
-        (void)osMutexRelease(queue->mutex);
-    }
-
-    return result;
-}
 
 /************************************************************************************/
 
@@ -621,11 +412,11 @@ static void comm_ctrl_get_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cm
 {
     if ((comm_ctrl != NULL) && (cmd != NULL))
     {
-        if (osMutexAcquire(comm_ctrl->single_cmd_queue.mutex, osWaitForever) == osOK)
+        if (osMutexAcquire(comm_ctrl->mutex, osWaitForever) == osOK)
         {
             memcpy(cmd, &comm_ctrl->period_cmd, sizeof(comm_data_t));
 
-            (void)osMutexRelease(comm_ctrl->single_cmd_queue.mutex);
+            (void)osMutexRelease(comm_ctrl->mutex);
         }
     }
 }
@@ -661,11 +452,10 @@ comm_result_t comm_ctrl_init(comm_ctrl_t *comm_ctrl)
                  (void *)comm_ctrl);
         fsm_create_event_queue(&comm_ctrl->fsm, 4U);
         /* Single command queue: initialize (creates its own mutex) */
-        if (comm_cmd_queue_init(&comm_ctrl->single_cmd_queue,
-                                comm_ctrl->single_cmd_buffer,
-                                COMM_SINGLE_CMD_QUEUE_SIZE) != COMM_OK)
+        comm_ctrl->single_cmd_queue = osMessageQueueNew(COMM_SINGLE_CMD_QUEUE_SIZE, sizeof(comm_cmd_t), NULL);
+        if(comm_ctrl->single_cmd_queue == NULL)
         {
-            ret = COMM_ERROR;
+            return COMM_ERROR;
         }
 
         comm_ctrl_recv_pool_init(&comm_ctrl->recv_pool);
@@ -773,34 +563,33 @@ static void comm_ctrl_recv_data(void* ctx, message_t* msg)
         return;
     }
 
-    if(comm_ctrl->cur_cmd.is_timeout == true)
+    if(fsm_get_current_state(&comm_ctrl->fsm) != COMM_CTRL_STATE_WAIT_RESP)
     {
         //timeout already, discard
         DEBUG("recv data but command already timeout, discard\n");
         comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
     }
-    // else if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
-    // {
-    //     comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+    else if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
+    {
+        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
 
-    // }
+    }
     else
     {
         DEBUG("recv data matched current command, process it\n");
-        memcpy(&comm_ctrl->cur_cmd.resp_data, data, sizeof(comm_data_t));
+        comm_ctrl_recv_pool_push_ready(&comm_ctrl->recv_pool, buf_idx);
         fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_RECV_RESP);
-        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
     }
 }
 
-comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl)
+comm_result_t comm_ctrl_process(comm_ctrl_t *comm_ctrl,uint32_t timeout_ms)
 {
     if(comm_ctrl == NULL || comm_ctrl->msg_queue == NULL)
     {
         return COMM_ERROR;
     }
     message_t msg;
-    if(message_queue_receive(comm_ctrl->msg_queue, &msg, 0U) == MSG_OK)
+    if(message_queue_receive(comm_ctrl->msg_queue, &msg, timeout_ms) == MSG_OK)
     {
         message_table_proccess(comm_ctrl_msg_table, COMM_CTRL_MSG_TABLE_SIZE, &msg, (void *)comm_ctrl);
         fsm_poll(&comm_ctrl->fsm);
@@ -821,7 +610,7 @@ comm_result_t comm_ctrl_send_msg(comm_ctrl_t *comm_ctrl, message_t *msg)
     return COMM_OK;
 }
 
-comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data);
+comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, uint8_t *data, uint16_t len);
 static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
 {
     comm_data_t cmd_data;
@@ -839,7 +628,7 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
         }
         //直接发送
     }
-    else if (comm_cmd_queue_dequeue(&comm_ctrl->single_cmd_queue, &cmd_data))//有单次命令
+    else if ( osMessageQueueGet(comm_ctrl->single_cmd_queue, &cmd_data, NULL, 0U) == osOK)//有单次命令
     {
         DEBUG("send single command id: 0x%02X\n", cmd_data.comm_id);
         send_cmd_data = &cmd_data;
@@ -873,7 +662,7 @@ comm_result_t comm_ctrl_send_single_command(comm_ctrl_t *comm_ctrl, comm_data_t 
     if ((comm_ctrl != NULL) && (cmd != NULL))
     {
         /* Enqueue command to single command queue (function is thread-safe) */
-        if (comm_cmd_queue_enqueue(&comm_ctrl->single_cmd_queue, cmd))
+        if (osMessageQueuePut(comm_ctrl->single_cmd_queue, cmd, 0U, 0U) == osOK)
         {
             DEBUG("enqueue single command id: 0x%02X\n", cmd->comm_id);
             ret = COMM_OK;
@@ -892,12 +681,12 @@ comm_result_t comm_ctrl_send_period_command(comm_ctrl_t *comm_ctrl, comm_data_t 
     return ret;
 }
 
-comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data)
+comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, uint8_t *data, uint16_t len)
 {
     comm_result_t ret = COMM_ERROR;
     uint8_t buf_idx = 0xFFU;
     comm_data_t* buf = NULL;
-    if ((comm_ctrl == NULL) || (data == NULL))
+    if ((comm_ctrl == NULL) || (data == NULL) || len > sizeof(COMM_DATA_MAX_LEN) || len <= 1U)
     {
         return ret;
     }
@@ -914,7 +703,9 @@ comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data
         return ret;
     }
     /* Copy data to buffer */
-    memcpy(buf, data, sizeof(comm_data_t));
+    buf->comm_id = data[0];
+    buf->comm_len = len - 1;
+    memcpy(buf->comm_data, &data[1], buf->comm_len);
         /* Push buffer index to recv queue */
     if (comm_ctrl_recv_pool_push_recv(&comm_ctrl->recv_pool, buf_idx) != COMM_OK)
     {
