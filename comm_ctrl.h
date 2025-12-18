@@ -11,8 +11,7 @@
 
 /* Internal command queue */
 #define COMM_SINGLE_CMD_QUEUE_SIZE  6U
-#define COMM_RECV_DATA_QUEUE_SIZE   4U
-#define COMM_SEND_DATA_QUEUE_SIZE   2U
+#define COMM_RECV_DATA_QUEUE_SIZE   2U
 enum{
     MESSAGE_ID_COMM_START = 0U,
     MESSAGE_ID_COMM_NOTIFY,
@@ -41,7 +40,6 @@ typedef struct
 typedef struct{
     comm_type_t cmd_type;
     comm_data_t send_data;
-    comm_data_t resp_data;
     uint8_t send_cmd_id;
     uint8_t resp_cmd_id;
     uint16_t timeout;

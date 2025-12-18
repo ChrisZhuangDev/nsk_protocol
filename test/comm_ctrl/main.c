@@ -25,7 +25,7 @@ void app_thread(void *argument)
     comm_ctrl_start(&comm_ctrl_instance);
     while(1)
     {
-        comm_ctrl_process(&comm_ctrl_instance);
+        comm_ctrl_process(&comm_ctrl_instance, 100);
         osDelay(10);
     }
 }
