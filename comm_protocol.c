@@ -180,8 +180,8 @@ static void comm_protocol_dump_decoder_result(const uint8_t *data, uint16_t len)
 static void comm_protocol_decode_trigger_callback(protocol_decoder_t *decoder, uint8_t *data, uint16_t data_len)
 {
     DEBUG("parser ok\n");  // Fixed typo: "paraser" -> "parser"
-    comm_protocol_dump_decoder(decoder, NULL, 0);
-    comm_protocol_dump_decoder_result(data, data_len);
+    // comm_protocol_dump_decoder(decoder, NULL, 0);
+    // comm_protocol_dump_decoder_result(data, data_len);
     if (decoder != NULL && decoder->callback != NULL)
     {
         decoder->callback(decoder->user_data, data, data_len);
@@ -451,7 +451,7 @@ comm_result_t comm_protocol_decoder_process(protocol_decoder_t *decoder, uint8_t
     if (ret == COMM_ERROR)
     {
         DEBUG("parser error\n");  // Fixed typo: "paraser" -> "parser"
-        comm_protocol_dump_decoder(decoder, buf, len);
+        // comm_protocol_dump_decoder(decoder, buf, len);
     }
         
     return ret;    

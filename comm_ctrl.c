@@ -5,6 +5,7 @@
 #if DEBUG_COMM_CTRL
 #include <stdio.h>
 #include <sys/time.h>
+static uint32_t timeout_cnt = 0;
 static uint64_t start_time_ms = 0;
 static inline uint64_t get_timestamp_ms(void) {
     struct timeval tv;
@@ -62,7 +63,7 @@ static void comm_ctrl_fsm_actrion_start(void* handle)
     DEBUG("comm ctrl fsm started\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     comm_ctrl->cur_cmd.cmd_type = COMM_TYPE_NONE;
-    comm_ctrl_preiod_timer_start(comm_ctrl, 2000U); /* Start period timer with 1s period */
+    comm_ctrl_preiod_timer_start(comm_ctrl, 50); /* Start period timer with 1s period */
     fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_SEND_CYCLE);
 }
 
@@ -81,22 +82,31 @@ static void comm_ctrl_fsm_actrion_recv_resp(void* handle)
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
     comm_ctrl_timeout_timer_stop(comm_ctrl); /* Stop timeout timer */
     comm_ctrl->cur_cmd.is_timeout = false;
+    comm_ctrl->cur_cmd.retry_count = 4U;
+        DEBUG("timeout count : %d\n", timeout_cnt);
 }
 
 static void comm_ctrl_fsm_actrion_resp_timeout(void* handle)
 {
     DEBUG("comm ctrl fsm resp timeout\n");
     comm_ctrl_t *comm_ctrl = (comm_ctrl_t *)handle;
-    if((--comm_ctrl->cur_cmd.retry_count) > 0U)
+    // if((--comm_ctrl->cur_cmd.retry_count) > 0U)
+    // {
+    //     comm_ctrl->cur_cmd.is_timeout = true;
+    //     DEBUG("retry send command, remaining retry count: %u\n", comm_ctrl->cur_cmd.retry_count);
+    // }
+    // else
+    // {
+    //     fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_ERROR);
+    //     DEBUG("command retry exhausted\n");
+    // }
+    if((comm_ctrl->cur_cmd.retry_count) > 0U)
     {
         comm_ctrl->cur_cmd.is_timeout = true;
         DEBUG("retry send command, remaining retry count: %u\n", comm_ctrl->cur_cmd.retry_count);
     }
-    else
-    {
-        fsm_send_event(&comm_ctrl->fsm, COMM_CTRL_EVENT_ERROR);
-        DEBUG("command retry exhausted\n");
-    }
+    timeout_cnt++;
+    DEBUG("timeout count : %d\n", timeout_cnt);
 }
 
 static void comm_ctrl_fsm_actrion_error(void* handle)
@@ -428,7 +438,7 @@ static comm_result_t comm_ctrl_load_data_to_cmd(comm_data_t* data, comm_type_t t
         return COMM_ERROR;
     }
     cmd->send_cmd_id = data->comm_id;
-    memcpy(&cmd->send_data, data, data->comm_len);
+    memcpy(&cmd->send_data, data, sizeof(comm_data_t));
     if(is_reset_retry)
     {
         cmd->retry_count = 4;
@@ -577,14 +587,14 @@ static void comm_ctrl_recv_data(void* ctx, message_t* msg)
     if(fsm_get_current_state(&comm_ctrl->fsm) != COMM_CTRL_STATE_WAIT_RESP)
     {
         //timeout already, discard
-        DEBUG("recv data but command already timeout, discard\n");
+        DEBUG("recv data but command already timeout, discard  %d \n",fsm_get_current_state(&comm_ctrl->fsm));
         comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
     }
-    else if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
-    {
-        comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
+    // else if(data->comm_id != comm_ctrl->cur_cmd.resp_cmd_id)
+    // {
+    //     comm_ctrl_recv_pool_free_idle(&comm_ctrl->recv_pool, buf_idx);
 
-    }
+    // }
     else
     {
         DEBUG("recv data matched current command, process it\n");
@@ -634,7 +644,6 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
     {
         DEBUG("resend command id: 0x%02X\n", comm_ctrl->cur_cmd.send_cmd_id);
         comm_ctrl->cur_cmd.is_timeout = false;
-        send_cmd_data = &comm_ctrl->cur_cmd.send_data;
 
     }
     else if ( osMessageQueueGet(comm_ctrl->single_cmd_queue, &cmd_data, NULL, 0U) == osOK)//有单次命令
@@ -642,6 +651,12 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
         DEBUG("send single command id: 0x%02X\n", cmd_data.comm_id);
         send_cmd_data = &cmd_data;
         cmd_type = COMM_TYPE_SINGLE;
+        printf("data to send:");
+        for (uint16_t i = 0; i < cmd_data.comm_len; i++)
+        {
+            printf("%02X ", cmd_data.comm_data[i]);
+        }
+        printf("\n");
         //装填在发送
         comm_ctrl_load_data_to_cmd(send_cmd_data, COMM_TYPE_SINGLE, &comm_ctrl->cur_cmd, true);
     }
@@ -659,14 +674,19 @@ static comm_result_t comm_ctrl_send_cmd(comm_ctrl_t *comm_ctrl)
             comm_ctrl_load_data_to_cmd(send_cmd_data, COMM_TYPE_PERIOD, &comm_ctrl->cur_cmd, true);
         }
     }
-    comm_ctrl->cur_cmd.timeout = 1000U;
+    comm_ctrl->cur_cmd.timeout = 20U;
     comm_ctrl_timeout_timer_start(comm_ctrl, comm_ctrl->cur_cmd.timeout); /* Start timeout timer with 5s timeout */    
     if(comm_ctrl->send_func != NULL)
     {
         send_buf[0] = comm_ctrl->cur_cmd.send_cmd_id;
-        memcpy(&send_buf[1], &comm_ctrl->cur_cmd.send_data, comm_ctrl->cur_cmd.send_data.comm_len);
+        memcpy(&send_buf[1], &comm_ctrl->cur_cmd.send_data.comm_data, comm_ctrl->cur_cmd.send_data.comm_len);
         send_len = comm_ctrl->cur_cmd.send_data.comm_len + 1U;
         comm_ctrl->send_func(send_buf, send_len);
+    }
+    else
+    {
+        DEBUG("send function not set\n");
+        return COMM_ERROR;
     }
     return COMM_OK;
 }
@@ -702,8 +722,10 @@ comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, uint8_t *data, ui
     comm_result_t ret = COMM_ERROR;
     uint8_t buf_idx = 0xFFU;
     comm_data_t* buf = NULL;
-    if ((comm_ctrl == NULL) || (data == NULL) || len > sizeof(COMM_DATA_MAX_LEN) || len <= 1U)
+    if ((comm_ctrl == NULL) || (data == NULL) || len > COMM_DATA_MAX_LEN || len <= 1U)
     {
+        DEBUG("invalid param \n");
+
         return ret;
     }
     /* Allocate buffer from pool */
@@ -759,7 +781,7 @@ comm_result_t comm_ctrl_get_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data)
     /* Pop buffer index from ready queue */
     if (comm_ctrl_recv_pool_pop_ready(&comm_ctrl->recv_pool, &buf_idx) != COMM_OK)
     {
-        DEBUG("no ready data in pool\n");
+        // DEBUG("no ready data in pool\n");
         return COMM_EMPTY_QUEUE;
     }
     buf = comm_ctrl_recv_pool_get_buf(&comm_ctrl->recv_pool, buf_idx);

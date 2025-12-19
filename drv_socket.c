@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 
 static struct {
@@ -75,6 +76,13 @@ int drv_socket_open(const char *host, uint16_t port, int nonblock)
 		(void)close(g_sock.fd);
 		g_sock.fd = -1;
 		return result;
+	}
+
+	/* 禁用Nagle算法,减少小包延迟 */
+	int flag = 1;
+	if (setsockopt(g_sock.fd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(flag)) < 0)
+	{
+		printf("Warning: Failed to disable Nagle algorithm\n");
 	}
 
 	if (set_nonblock(g_sock.fd, nonblock) != 0)
@@ -167,25 +175,44 @@ size_t drv_socket_send(const uint8_t *buf, size_t len, int timeout_ms)
 	return sent;
 }
 
-size_t drv_socket_recv(uint8_t *buf, size_t len, int timeout_ms)
+ssize_t drv_socket_recv(uint8_t *buf, size_t len, int timeout_ms)
 {
-	size_t recvd = -1;
+	ssize_t recvd = 0;
 
 	if ((buf == NULL) || (len == 0U) || (g_sock.fd < 0))
 	{
-		return recvd;
+		return -1;
 	}
 
-	struct pollfd pfd;
-	pfd.fd = g_sock.fd;
-	pfd.events = POLLIN;
-	int pr = poll(&pfd, 1, timeout_ms);
-	if (pr <= 0)
+	if (timeout_ms >= 0)
 	{
-		return recvd;
+		struct pollfd pfd;
+		pfd.fd = g_sock.fd;
+		pfd.events = POLLIN;
+		int pr = poll(&pfd, 1, timeout_ms);
+		if (pr <= 0)
+		{
+			return 0;  /* timeout or error, no data */
+		}
 	}
 
 	recvd = recv(g_sock.fd, buf, len, 0);
+	if (recvd < 0)
+	{
+		/* 非阻塞模式下,EAGAIN/EWOULDBLOCK 表示暂时无数据 */
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+		{
+			return 0;  /* treat as timeout, no data available */
+		}
+		/* 其他错误(如连接断开) */
+		g_sock.connected = 0;
+		return -1;
+	}
+	else if (recvd == 0)
+	{
+		/* 对端关闭连接 */
+		g_sock.connected = 0;
+	}
 	return recvd;
 }
 
@@ -234,7 +261,6 @@ comm_result_t drv_socket_tx_enqueue(const uint8_t *buf, uint16_t len)
 
 	item.len = len;
 	(void)memcpy(item.data, buf, len);
-
 	if (osMessageQueuePut(g_tx_mq, &item, 0U, 0U) == osOK)
 	{
 		result = COMM_OK;

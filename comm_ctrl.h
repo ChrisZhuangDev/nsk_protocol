@@ -80,5 +80,5 @@ comm_result_t comm_ctrl_set_send_func(comm_ctrl_t *comm_ctrl, comm_send_func_t s
 comm_result_t comm_ctrl_send_single_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
 comm_result_t comm_ctrl_send_period_command(comm_ctrl_t *comm_ctrl, comm_data_t *cmd);
 comm_result_t comm_ctrl_save_recv_data(comm_ctrl_t *comm_ctrl, uint8_t *data, uint16_t len);
-
+comm_result_t comm_ctrl_get_recv_data(comm_ctrl_t *comm_ctrl, comm_data_t *data);
 #endif // COMM_CTRL_H
